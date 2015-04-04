@@ -1,6 +1,6 @@
 require "class"
 
-local Perlin = require "PerlinModule/perlin"
+local Perlin = require "perlin"
 
 -- localization
 
