@@ -113,6 +113,9 @@ for i, entry in pairs(AttributeDict) do
   local threechars = r .. g .. b
   AttributeDict[i].threechars = threechars
   AttributesByName[entry.name] = { index = i, rgb = aRGB, threechars = threechars}
+  local ratioRGB = { aRGB[1] / 255, aRGB[2] / 255, aRGB[3] / 255 }
+  AttributesByName[entry.name].ratioRGB = ratioRGB
+  AttributeDict[i].ratioRGB = ratioRGB
 end
 
 -- for metal spot writing
@@ -178,10 +181,10 @@ local CommandWords = {
     myWorld:Clear()
   end,
   height = function(words, myWorld, uiCommand)
-    myWorld:RenderHeightImage(uiCommand, mapRulerNames[words[3]] or myWorld.heightMapRuler)
+    myWorld:RenderHeightImage(uiCommand, myWorld.mapRulerNames[words[3]] or myWorld.heightMapRuler)
   end,
   attributes = function(words, myWorld, uiCommand)
-    myWorld:RenderAttributes(uiCommand, mapRulerNames[words[3]] or myWorld.heightMapRuler)
+    myWorld:RenderAttributes(uiCommand, myWorld.mapRulerNames[words[3]] or myWorld.heightMapRuler)
   end,
   metal = function(words, myWorld, uiCommand)
     myWorld:RenderMetal(uiCommand)
@@ -213,7 +216,7 @@ local CommandWords = {
     myWorld:ResetMeteorAges()
   end,
   renderall = function(words, myWorld, uiCommand)
-    local mapRuler = mapRulerNames[words[3]] or myWorld.heightMapRuler
+    local mapRuler = myWorld.mapRulerNames[words[3]] or myWorld.heightMapRuler
     myWorld:RenderFeatures()
     myWorld:RenderMetal()
     myWorld:RenderAttributes(nil, mapRuler)
@@ -360,7 +363,7 @@ end
 
 local function FWriteClose()
   currentFile:close()
-  print(currentFilename .. " written")
+  debugEcho(currentFilename .. " written")
 end
 
 local function serialize(o)
@@ -538,8 +541,8 @@ function M.World:RendererFrame(frame)
     renderer:Frame(frame)
     if renderer.complete then
       tRemove(self.renderers, 1)
-      return renderer
     end
+    return renderer
   end
 end
 
@@ -764,18 +767,12 @@ function M.HeightBuffer:MinMaxCheck(height)
   if height < self.minHeight then self.minHeight = height end
 end
 
-function M.HeightBuffer:Write(x, y, height)
-  local sx, sz = self.mapRuler:XYtoXZ(x, y)
-  spLevelHeightMap(sx, sz, sx+8, sz-8, self.world.baselevel+height)
-end
-
 function M.HeightBuffer:Add(x, y, height, alpha)
   if not self:CoordsOkay(x, y) then return end
   alpha = alpha or 1
   local newHeight = self.heights[x][y] + (height * alpha)
   self.heights[x][y] = newHeight
   self:MinMaxCheck(newHeight)
-  self:Write(x, y, newHeight)
 end
 
 function M.HeightBuffer:Blend(x, y, height, alpha, secondary)
@@ -786,7 +783,6 @@ function M.HeightBuffer:Blend(x, y, height, alpha, secondary)
   local newHeight = (self.heights[x][y] * orig) + (height * alpha)
   self.heights[x][y] = newHeight
   self:MinMaxCheck(newHeight)
-  self:Write(x, y, newHeight)
   if not secondary and self.antiAlias then
     for xx = -1, 1 do
       for yy = -1, 1 do
@@ -806,7 +802,6 @@ function M.HeightBuffer:Set(x, y, height)
   if not self:CoordsOkay(x, y) then return end
   self.heights[x][y] = height
   self:MinMaxCheck(height)
-  self:Write(x, y, height)
 end
 
 function M.HeightBuffer:Get(x, y)
@@ -893,7 +888,6 @@ function M.Renderer:Frame(frame)
   if self.progress > self.totalProgress or not progress then
     self:Finish(frame)
   end
-  if self.complete then return self.data end
 end
 
 function M.Renderer:Finish(frame)
@@ -1470,7 +1464,6 @@ end)
 
 function M.Meteor:Collide()
   self.impact = M.Impact(self)
-  self:PrepareDraw()
 end
 
 function M.Meteor:SetAge(age)
@@ -1520,7 +1513,6 @@ function M.Meteor:ShiftUp()
   end
   self.world.meteors = newMeteors
   self.world:ResetMeteorAges()
-  self:PrepareDraw()
 end
 
 function M.Meteor:ShiftDown()
@@ -1542,7 +1534,6 @@ function M.Meteor:ShiftDown()
   end
   self.world.meteors = newMeteors
   self.world:ResetMeteorAges()
-  self:PrepareDraw()
 end
 
 function M.Meteor:Move(sx, sz, noMirror)
@@ -1962,6 +1953,20 @@ end
 
 function M.SetOutputDirectory(outDirNew)
   outDir = outDirNew
+end
+
+function M.SetCommandWord(word, comFunc)
+  CommandWords[word] = comFunc
+end
+
+function M.GetAttributeRGB(attribute)
+  local rgb = AttributeDict[attribute].rgb
+  return rgb[1], rgb[2], rgb[3]
+end
+
+function M.GetAttributeRatioRGB(attribute)
+  local rgb = AttributeDict[attribute].ratioRGB
+  return rgb[1], rgb[2], rgb[3]
 end
 
 -- export module
