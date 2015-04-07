@@ -5,7 +5,7 @@ if love then mRandomSeed = love.math.setRandomSeed end
 
 local rand = { mySeed = 1, lastN = -1 }
 
-local function rand:get(seed, n)
+function rand:get(seed, n)
   if n <= 0 then n = -2 * n
   else n = 2 * n - 1
   end
@@ -22,7 +22,7 @@ local function rand:get(seed, n)
   return num - 0.5
 end
 
-local function rand:num()
+function rand:num()
   rand.lastN = -1
   return mRandom() - 0.5
 end
@@ -47,7 +47,7 @@ local function perlinComponent1D(seed, length, N, amplitude)
   local rawData = {}
   local finalData = {}
   for i = 1, math.ceil(length/N) + 3 do
-    local rawData[i] = amplitude * rand:get(seed, i)
+    rawData[i] = amplitude * rand:get(seed, i)
   end
   local interpData = interpolate1D(rawData, N)
   assert(#interpData >= length)

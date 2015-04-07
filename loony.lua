@@ -1,6 +1,9 @@
+package.path = package.path .. ";LoonyModule/?.lua"
 require "class"
 
 local Perlin = require "perlin"
+
+local M = {} -- module
 
 -- localization
 
@@ -64,9 +67,10 @@ mMix = math.mix or mMix
 
 -- local variables:
 
-local outDir = ""
+local outDir = outDir or "output/"
 local yesMare = false -- send huge melt-floor-generating meteors before a shower?
 local doNotStore = false
+local myWorld
 
 local diffDistances = {}
 local diffDistancesSq = {}
@@ -174,16 +178,10 @@ local CommandWords = {
     myWorld:Clear()
   end,
   height = function(words, myWorld, uiCommand)
-    myWorld:RenderHeightImage(uiCommand, mapRulerNames[words[3]] or heightMapRuler)
+    myWorld:RenderHeightImage(uiCommand, mapRulerNames[words[3]] or myWorld.heightMapRuler)
   end,
   attributes = function(words, myWorld, uiCommand)
-    myWorld:RenderAttributes(uiCommand, mapRulerNames[words[3]] or heightMapRuler)
-  end,
-  heightpreview = function(words, myWorld, uiCommand)
-    myWorld:RenderHeightImage(uiCommand, displayMapRuler)
-  end,
-  attributespreview = function(words, myWorld, uiCommand)
-    myWorld:RenderAttributes(uiCommand, displayMapRuler)
+    myWorld:RenderAttributes(uiCommand, mapRulerNames[words[3]] or myWorld.heightMapRuler)
   end,
   metal = function(words, myWorld, uiCommand)
     myWorld:RenderMetal(uiCommand)
@@ -215,17 +213,11 @@ local CommandWords = {
     myWorld:ResetMeteorAges()
   end,
   renderall = function(words, myWorld, uiCommand)
-    local mapRuler = mapRulerNames[words[3]] or heightMapRuler
+    local mapRuler = mapRulerNames[words[3]] or myWorld.heightMapRuler
     myWorld:RenderFeatures()
     myWorld:RenderMetal()
     myWorld:RenderAttributes(nil, mapRuler)
     myWorld:RenderHeightImage(uiCommand, mapRuler)
-  end,
-  exit = function(words, myWorld, uiCommand)
-    love.event.quit()
-  end,
-  quit = function(words, myWorld, uiCommand)
-    love.event.quit()
   end,
 }
 
@@ -290,7 +282,7 @@ local function pairsByKeys (t, f)
   for n in pairs(t) do tInsert(a, n) end
   tSort(a, f)
   local i = 0      -- iterator variable
-  local iter = local function ()   -- iterator local function
+  local iter = function ()   -- iterator local function
     i = i + 1
     if a[i] == nil then return nil
     else return a[i], t[a[i]]
@@ -451,7 +443,7 @@ end
 
 -- classes and methods organized by class: -----------------------------------
 
-local World = class(function(a, mapSize512X, mapSize512Z, metersPerElmo, baselevel, gravity, density, mirror, underlyingPerlin, erosion)
+M.World = class(function(a, mapSize512X, mapSize512Z, metersPerElmo, baselevel, gravity, density, mirror, underlyingPerlin, erosion)
   a.mapSize512X = mapSize512X or 8
   a.mapSize512Z = mapSize512Z or 8
   a.metersPerElmo = metersPerElmo or 1 -- meters per elmo for meteor simulation model only
@@ -483,23 +475,21 @@ local World = class(function(a, mapSize512X, mapSize512Z, metersPerElmo, baselev
   a:Clear()
 end)
 
-function World:Calculate()
+function M.World:Calculate()
   self.mapSizeX = self.mapSize512X * 512
   self.mapSizeZ = self.mapSize512Z * 512
-  heightMapRuler = MapRuler(self, nil, (self.mapSizeX / Game.squareSize) + 1, (self.mapSizeZ / Game.squareSize) + 1)
-  metalMapRuler = MapRuler(self, 16, (self.mapSizeX / 16), (self.mapSizeZ / 16))
-  L3DTMapRuler = MapRuler(self, 4, (self.mapSizeX / 4), (self.mapSizeZ / 4))
-  fullMapRuler = MapRuler(self, 1)
+  self.heightMapRuler = M.MapRuler(self, nil, (self.mapSizeX / Game.squareSize) + 1, (self.mapSizeZ / Game.squareSize) + 1)
+  self.metalMapRuler = M.MapRuler(self, 16, (self.mapSizeX / 16), (self.mapSizeZ / 16))
+  self.L3DTMapRuler = M.MapRuler(self, 4, (self.mapSizeX / 4), (self.mapSizeZ / 4))
+  self.fullMapRuler = M.MapRuler(self, 1)
 
-  mapRulerNames = {
-    full = fullMapRuler,
-    l3dt = L3DTMapRuler,
-    height = heightMapRuler,
-    spring = heightMapRuler,
-    metal = metalMapRuler,
+  self.mapRulerNames = {
+    full = self.fullMapRuler,
+    l3dt = self.L3DTMapRuler,
+    height = self.heightMapRuler,
+    spring = self.heightMapRuler,
+    metal = self.metalMapRuler,
   }
-
-  ResetDisplay(self)
 
   self.complexDiameter = 3200 / (self.gravity / 9.8)
   local Dc = self.complexDiameter / 1000
@@ -510,15 +500,14 @@ function World:Calculate()
   self:ResetMeteorAges()
 end
 
-function World:Clear()
-  self.heightBuf = HeightBuffer(self, heightMapRuler)
+function M.World:Clear()
   self.meteors = {}
   self.renderers = {}
   self.metalSpotCount = 0
   self.geothermalMeteorCount = 0
 end
 
-function World:Save(name)
+function M.World:Save(name)
   name = name or ""
   FWriteOpen("world"..name, "lua", "w")
   FWrite("return ")
@@ -526,7 +515,7 @@ function World:Save(name)
   FWriteClose()
 end
 
-function World:Load(luaStr)
+function M.World:Load(luaStr)
   self:Clear()
   local loadWorld = loadstring(luaStr)
   local newWorld = loadWorld()
@@ -536,15 +525,14 @@ function World:Load(luaStr)
   self.meteors = {}
   self:Calculate()
   for i, m in pairs(newWorld.meteors) do
-    local newM = Meteor(self, m.sx, m.sz, m.diameterImpactor, m.velocityImpactKm, m.angleImpact, m.densityImpactor, m.age, m.metal, m.geothermal, m.seedSeed, m.ramps, m.mirrorMeteor)
+    local newM = M.Meteor(self, m.sx, m.sz, m.diameterImpactor, m.velocityImpactKm, m.angleImpact, m.densityImpactor, m.age, m.metal, m.geothermal, m.seedSeed, m.ramps, m.mirrorMeteor)
     newM:Collide()
     self.meteors[i] = newM
   end
-  if self.heightBuf then self.heightBuf.changesPending = true end
   debugEcho("world loaded with " .. #self.meteors .. " meteors")
 end
 
-function World:RendererFrame(frame)
+function M.World:RendererFrame(frame)
   local renderer = self.renderers[1]
   if renderer then
     renderer:Frame(frame)
@@ -555,7 +543,7 @@ function World:RendererFrame(frame)
   end
 end
 
-function World:MeteorShower(number, minDiameter, maxDiameter, minVelocity, maxVelocity, minAngle, maxAngle, minDensity, maxDensity, underlyingMare)
+function M.World:MeteorShower(number, minDiameter, maxDiameter, minVelocity, maxVelocity, minAngle, maxAngle, minDensity, maxDensity, underlyingMare)
   number = number or 3
   minDiameter = minDiameter or 1
   maxDiameter = maxDiameter or 500
@@ -591,58 +579,54 @@ function World:MeteorShower(number, minDiameter, maxDiameter, minVelocity, maxVe
   debugEcho(#self.meteors, self.metalSpotCount, self.geothermalMeteorCount)
 end
 
-function World:ResetMeteorAges()
+function M.World:ResetMeteorAges()
   if not self.meteors then return end
   for i, m in pairs(self.meteors) do
     m:SetAge(((#self.meteors-i)/#self.meteors)*100)
   end
 end
 
-function World:AddMeteor(sx, sz, diameterImpactor, velocityImpactKm, angleImpact, densityImpactor, age, metal, geothermal, seedSeed, ramps, mirrorMeteor, noMirror)
-  local m = Meteor(self, sx, sz, diameterImpactor, velocityImpactKm, angleImpact, densityImpactor, age, metal, geothermal, seedSeed, ramps, mirrorMeteor)
+function M.World:AddMeteor(sx, sz, diameterImpactor, velocityImpactKm, angleImpact, densityImpactor, age, metal, geothermal, seedSeed, ramps, mirrorMeteor, noMirror)
+  local m = M.Meteor(self, sx, sz, diameterImpactor, velocityImpactKm, angleImpact, densityImpactor, age, metal, geothermal, seedSeed, ramps, mirrorMeteor)
   tInsert(self.meteors, m)
   if self.mirror ~= "none" and not mirrorMeteor and not noMirror then
     m:Mirror(true)
   end
-  if self.heightBuf then self.heightBuf.changesPending = true end
   m:Collide()
   return m
 end
 
-function World:RenderAttributes(uiCommand, mapRuler)
-  mapRuler = mapRuler or heightMapRuler
-  if mapRuler == fullMapRuler then
+function M.World:RenderAttributes(uiCommand, mapRuler)
+  mapRuler = mapRuler or self.heightMapRuler
+  if mapRuler == self.fullMapRuler then
     doNotStore = true
     ClearSpeedupStorage()
-    self.heightBuf = nil
   end
-  local renderer = Renderer(self, mapRuler, 8000, "Attributes", uiCommand)
+  local renderer = M.Renderer(self, mapRuler, 8000, "Attributes", uiCommand)
   tInsert(self.renderers, renderer)
 end
 
-function World:RenderHeightImage(uiCommand, mapRuler)
-  mapRuler = mapRuler or L3DTMapRuler
+function M.World:RenderHeightImage(uiCommand, mapRuler)
+  mapRuler = mapRuler or self.L3DTMapRuler
   doNotStore = true
   ClearSpeedupStorage()
-  self.heightBuf = nil
-  local tempHeightBuf = HeightBuffer(self, mapRuler)
-  tInsert(self.renderers, Renderer(self, mapRuler, 4000, "Height", uiCommand, tempHeightBuf))
-  if mapRuler ~= displayMapRuler then
-    tInsert(self.renderers, Renderer(self, mapRuler, 15000, "HeightImage", uiCommand, tempHeightBuf, true))
-  end
+  local tempHeightBuf = M.HeightBuffer(self, mapRuler)
+  tInsert(self.renderers, M.Renderer(self, mapRuler, 4000, "Height", uiCommand, tempHeightBuf))
+  tInsert(self.renderers, M.Renderer(self, mapRuler, 15000, "HeightImage", uiCommand, tempHeightBuf, true))
 end
 
-function World:RenderHeightPreview(uiCommand)
-  local tempHeightBuf = HeightBuffer(self, displayMapRuler)
-  tInsert(self.renderers, Renderer(self, displayMapRuler, 4000, "Height", uiCommand, tempHeightBuf))
+function M.World:RenderHeight(uiCommand, mapRuler)
+  mapRuler = mapRuler or self.heightMapRuler
+  local tempHeightBuf = M.HeightBuffer(self, mapRuler)
+  tInsert(self.renderers, M.Renderer(self, mapRuler, 4000, "Height", uiCommand, tempHeightBuf))
 end
 
-function World:RenderMetal(uiCommand)
-  local renderer = Renderer(self, metalMapRuler, 16000, "Metal", uiCommand, nil, true)
+function M.World:RenderMetal(uiCommand)
+  local renderer = M.Renderer(self, self.metalMapRuler, 16000, "Metal", uiCommand, nil, true)
   tInsert(self.renderers, renderer)
 end
 
-function World:RenderFeatures(uiCommand)
+function M.World:RenderFeatures(uiCommand)
   FWriteOpen("features", "lua", "w")
   FWrite("local setcfg = {\n\tunitlist = {\n\t},\n\tbuildinglist = {\n\t},\n\tobjectlist = {\n")
   for i, m in pairs(self.meteors) do
@@ -655,7 +639,7 @@ function World:RenderFeatures(uiCommand)
   debugEcho("wrote features lua")
 end
 
-function World:MirrorXZ(x, z)
+function M.World:MirrorXZ(x, z)
   local nx, nz
   if self.mirror == "reflectionalx" then
     nx = self.mapSizeX - x
@@ -670,7 +654,7 @@ function World:MirrorXZ(x, z)
   return nx, nz
 end
 
-function World:InterpretCommand(msg)
+function M.World:InterpretCommand(msg)
   if not msg then return end
   if msg == "" then return end
   msg = "loony " .. msg
@@ -689,7 +673,7 @@ end
 
 ----------------------------------------------------------
 
-local MapRuler = class(function(a, world, elmosPerPixel, width, height)
+M.MapRuler = class(function(a, world, elmosPerPixel, width, height)
   elmosPerPixel = elmosPerPixel or world.mapSizeX / (width-1)
   width = width or mCeil(world.mapSizeX / elmosPerPixel)
   height = height or mCeil(world.mapSizeZ / elmosPerPixel)
@@ -710,7 +694,7 @@ local MapRuler = class(function(a, world, elmosPerPixel, width, height)
   end
 end)
 
-function MapRuler:XZtoXY(x, z)
+function M.MapRuler:XZtoXY(x, z)
   if self.elmosPerPixel == 1 then
     return x+1, z+1
   else
@@ -720,7 +704,7 @@ function MapRuler:XZtoXY(x, z)
   end
 end
 
-function MapRuler:XYtoXZ(x, y)
+function M.MapRuler:XYtoXZ(x, y)
   if self.elmosPerPixel == 1 then
     return x-1, y-1
   else
@@ -730,7 +714,7 @@ function MapRuler:XYtoXZ(x, y)
   end
 end
 
-function MapRuler:RadiusBounds(x, y, radius)
+function M.MapRuler:RadiusBounds(x, y, radius)
   local w, h = self.width, self.height
   local xmin = mFloor(x - radius)
   local xmax = mCeil(x + radius)
@@ -745,7 +729,7 @@ end
 
 ----------------------------------------------------------
 
-local HeightBuffer = class(function(a, world, mapRuler)
+M.HeightBuffer = class(function(a, world, mapRuler)
   a.world = world
   a.mapRuler = mapRuler
   a.elmosPerPixel = mapRuler.elmosPerPixel
@@ -763,7 +747,7 @@ local HeightBuffer = class(function(a, world, mapRuler)
   debugEcho("new height buffer created", a.w, " by ", a.h)
 end)
 
-function HeightBuffer:CoordsOkay(x, y)
+function M.HeightBuffer:CoordsOkay(x, y)
   if not self.heights[x] then
     -- debugEcho("no row at ", x)
     return
@@ -775,17 +759,17 @@ function HeightBuffer:CoordsOkay(x, y)
   return true
 end
 
-function HeightBuffer:MinMaxCheck(height)
+function M.HeightBuffer:MinMaxCheck(height)
   if height > self.maxHeight then self.maxHeight = height end
   if height < self.minHeight then self.minHeight = height end
 end
 
-function HeightBuffer:Write(x, y, height)
+function M.HeightBuffer:Write(x, y, height)
   local sx, sz = self.mapRuler:XYtoXZ(x, y)
   spLevelHeightMap(sx, sz, sx+8, sz-8, self.world.baselevel+height)
 end
 
-function HeightBuffer:Add(x, y, height, alpha)
+function M.HeightBuffer:Add(x, y, height, alpha)
   if not self:CoordsOkay(x, y) then return end
   alpha = alpha or 1
   local newHeight = self.heights[x][y] + (height * alpha)
@@ -794,7 +778,7 @@ function HeightBuffer:Add(x, y, height, alpha)
   self:Write(x, y, newHeight)
 end
 
-function HeightBuffer:Blend(x, y, height, alpha, secondary)
+function M.HeightBuffer:Blend(x, y, height, alpha, secondary)
   if not self:CoordsOkay(x, y) then return end
   alpha = alpha or 1
   if alpha < 1 and self.heights[x][y] > height then alpha = alpha * alpha end
@@ -818,19 +802,19 @@ function HeightBuffer:Blend(x, y, height, alpha, secondary)
   end
 end
 
-function HeightBuffer:Set(x, y, height)
+function M.HeightBuffer:Set(x, y, height)
   if not self:CoordsOkay(x, y) then return end
   self.heights[x][y] = height
   self:MinMaxCheck(height)
   self:Write(x, y, height)
 end
 
-function HeightBuffer:Get(x, y)
+function M.HeightBuffer:Get(x, y)
   if not self:CoordsOkay(x, y) then return end
   return self.heights[x][y]
 end
 
-function HeightBuffer:GetCircle(x, y, radius)
+function M.HeightBuffer:GetCircle(x, y, radius)
   local xmin, xmax, ymin, ymax = self.mapRuler:RadiusBounds(x, y, radius)
   local totalHeight = 0
   local totalWeight = 0
@@ -848,14 +832,7 @@ function HeightBuffer:GetCircle(x, y, radius)
   return totalHeight / totalWeight, minHeight, maxHeight
 end
 
-function HeightBuffer:SendFile(uiCommand)
-  if self.changesPending then
-    tInsert(self.world.renderers, Renderer(self.world, self.mapRuler, 4000, "Height", uiCommand, self))
-  end
-  tInsert(self.world.renderers, Renderer(self.world, self.mapRuler, 15000, "HeightImage", uiCommand, self, true))
-end
-
-function HeightBuffer:Clear()
+function M.HeightBuffer:Clear()
   for x = 1, self.w do
     for y = 1, self.h do
       -- self:Set(x, y, 0)
@@ -868,7 +845,7 @@ end
 
 ----------------------------------------------------------
 
-local Renderer = class(function(a, world, mapRuler, pixelsPerFrame, renderType, uiCommand, heightBuf, noCraters, radius)
+M.Renderer = class(function(a, world, mapRuler, pixelsPerFrame, renderType, uiCommand, heightBuf, noCraters, radius)
   a.uiCommand = uiCommand or ""
   a.world = world
   a.mapRuler = mapRuler
@@ -880,7 +857,7 @@ local Renderer = class(function(a, world, mapRuler, pixelsPerFrame, renderType, 
   a.totalCraterArea = 0
   if not noCraters then
     for i, m in ipairs(world.meteors) do
-      local crater = Crater(m.impact, a)
+      local crater = M.Crater(m.impact, a)
       tInsert(a.craters, crater)
       a.totalCraterArea = a.totalCraterArea + crater.area
     end
@@ -895,19 +872,19 @@ local Renderer = class(function(a, world, mapRuler, pixelsPerFrame, renderType, 
   a:Preinitialize()
 end)
 
-function Renderer:Preinitialize()
+function M.Renderer:Preinitialize()
   self:PreinitFunc()
   self.preInitialized = true
 end
 
-function Renderer:Initialize(frame)
+function M.Renderer:Initialize(frame)
   self.startFrame = frame
   self.totalProgress = self.totalPixels
   self:InitFunc()
   self.initialized = true
 end
 
-function Renderer:Frame(frame)
+function M.Renderer:Frame(frame)
   if not self.initialized then self:Initialize(frame) end
   local progress = self:FrameFunc()
   if progress then
@@ -919,7 +896,7 @@ function Renderer:Frame(frame)
   if self.complete then return self.data end
 end
 
-function Renderer:Finish(frame)
+function M.Renderer:Finish(frame)
   self:FinishFunc()
   if not self.dontEndUiCommand then EndCommand(self.uiCommand) end
   local timeDiff = frame - self.startFrame
@@ -927,26 +904,26 @@ function Renderer:Finish(frame)
   self.complete = true
 end
 
-function Renderer:EmptyPreinit()
+function M.Renderer:EmptyPreinit()
   return
 end
 
-function Renderer:EmptyInit()
+function M.Renderer:EmptyInit()
   -- debugEcho("emptyinit")
   return
 end
 
- function Renderer:EmptyFinish()
+ function M.Renderer:EmptyFinish()
   -- debugEcho("emptyfinish")
   return
 end
 
-function Renderer:HeightInit()
+function M.Renderer:HeightInit()
   self.totalProgress = self.totalCraterArea
   self.metalSpots = {}
 end
 
-function Renderer:HeightFrame()
+function M.Renderer:HeightFrame()
   local pixelsRendered = 0
   while pixelsRendered < self.pixelsPerFrame and #self.craters > 0 do
     local c = self.craters[1]
@@ -973,20 +950,19 @@ function Renderer:HeightFrame()
   return pixelsRendered
 end
 
-function Renderer:HeightFinish()
+function M.Renderer:HeightFinish()
   self.dontEndUiCommand = true
-  self.heightBuf.changesPending = nil
   if self.uiCommand == "heightpreview" then
     self.data = self.heightBuf
   end
 end
 
-function Renderer:HeightImageInit()
+function M.Renderer:HeightImageInit()
   FWriteOpen("height_" .. self.mapRuler.width .. "x" .. self.mapRuler.height, "pgm")
   FWrite("P5 " .. tostring(self.mapRuler.width) .. " " .. tostring(self.mapRuler.height) .. " " .. 65535 .. " ")
 end
 
-function Renderer:HeightImageFrame()
+function M.Renderer:HeightImageFrame()
   local pixelsThisFrame = mMin(self.pixelsPerFrame, self.pixelsToRenderCount)
   local pMin = self.totalPixels - self.pixelsToRenderCount
   local pMax = pMin + pixelsThisFrame
@@ -1005,7 +981,7 @@ function Renderer:HeightImageFrame()
   return pixelsThisFrame + 1
 end
 
-function Renderer:HeightImageFinish()
+function M.Renderer:HeightImageFinish()
   FWriteClose()
   debugEcho("height File sent")
   FWriteOpen("heightrange", "txt", "w")
@@ -1014,15 +990,9 @@ function Renderer:HeightImageFinish()
     "max: " .. self.heightBuf.maxHeight .. "\n\r" ..
     "range: " .. (self.heightBuf.maxHeight - self.heightBuf.minHeight))
   FWriteClose()
-  if self.mapRuler ~= heightMapRuler then
-    doNotStore = false
-    local world = self.heightBuf.world
-    self.heightBuf = nil
-    world.heightBuf = HeightBuffer(world, heightMapRuler)
-  end
 end
 
-function Renderer:AttributesInit()
+function M.Renderer:AttributesInit()
   if self.uiCommand == "attributespreview" then
     self.data = {}
   else
@@ -1031,7 +1001,7 @@ function Renderer:AttributesInit()
   end
 end
 
-function Renderer:AttributesFrame()
+function M.Renderer:AttributesFrame()
   local pixelsThisFrame = mMin(self.pixelsPerFrame, self.pixelsToRenderCount)
   local pMin = self.totalPixels - self.pixelsToRenderCount
   local pMax = pMin + pixelsThisFrame
@@ -1057,7 +1027,7 @@ function Renderer:AttributesFrame()
   return pixelsThisFrame + 1
 end
 
-function Renderer:AttributesFinish()
+function M.Renderer:AttributesFinish()
   if self.uiCommand == "attributespreview" then
 
   else
@@ -1065,7 +1035,7 @@ function Renderer:AttributesFinish()
   end
 end
 
-function Renderer:MetalPreinit()
+function M.Renderer:MetalPreinit()
   self.metalSpots = {}
   for i, meteor in pairs(self.world.meteors) do
     if meteor.metal > 0 then
@@ -1077,7 +1047,7 @@ function Renderer:MetalPreinit()
   debugEcho(#self.metalSpots .. " metal spots")
 end
 
-function Renderer:MetalInit()
+function M.Renderer:MetalInit()
   FWriteOpen("metal", "lua", "w")
   FWrite("return {\n\tspots = {\n")
   for i, spot in pairs(self.metalSpots) do
@@ -1093,7 +1063,7 @@ function Renderer:MetalInit()
   self.blackThreeChars = string.char(0) .. string.char(0) .. string.char(0)
 end
 
-function Renderer:MetalFrame()
+function M.Renderer:MetalFrame()
   local pixelsThisFrame = mMin(self.pixelsPerFrame, self.pixelsToRenderCount)
   local pMin = self.totalPixels - self.pixelsToRenderCount
   local pMax = pMin + pixelsThisFrame
@@ -1111,14 +1081,14 @@ function Renderer:MetalFrame()
   return pixelsThisFrame + 1
 end
 
-function Renderer:MetalFinish()
+function M.Renderer:MetalFinish()
   FWriteClose()
 end
 
 ----------------------------------------------------------
 
--- Crater actually gets rendered. scales horizontal distances to the frame being rendered (does resolution-dependent calculations, based on an Impact)
-local Crater = class(function(a, impact, renderer)
+-- M.Crater actually gets rendered. scales horizontal distances to the frame being rendered (does resolution-dependent calculations, based on an M.Impact)
+M.Crater = class(function(a, impact, renderer)
   local world = impact.world
   local elmosPerPixel = renderer.mapRuler.elmosPerPixel
   local elmosPerPixelP2 = renderer.mapRuler.elmosPerPixelPowersOfTwo
@@ -1154,8 +1124,8 @@ local Crater = class(function(a, impact, renderer)
     local width = ramp.width / elmosPerPixel
     local halfTheta = mAsin(width / (2 * a.totalradiusPlusWobble))
     local cRamp = { angle = ramp.angle, width = width, halfTheta = halfTheta,
-      widthNoise = LinearNoise(10, 0.1, a:PopSeed(), 0.5, 2),
-      angleNoise = LinearNoise(25, 0.05, a:PopSeed(), 0.5, 4) }
+      widthNoise = M.LinearNoise(10, 0.1, a:PopSeed(), 0.5, 2),
+      angleNoise = M.LinearNoise(25, 0.05, a:PopSeed(), 0.5, 4) }
     tInsert(a.ramps, cRamp)
   end
 
@@ -1164,7 +1134,7 @@ local Crater = class(function(a, impact, renderer)
     for i, spot in pairs(impact.metalSpots) do
       local x, y = renderer.mapRuler:XZtoXY(spot.x, spot.z)
       local radius = mCeil(world.metalSpotRadius / elmosPerPixel)
-      local noise = NoisePatch(x, y, radius, a:PopSeed(), world.metalSpotDepth, 0.3, 5-elmosPerPixelP2, 1, 0.4)
+      local noise = M.NoisePatch(x, y, radius, a:PopSeed(), world.metalSpotDepth, 0.3, 5-elmosPerPixelP2, 1, 0.4)
       local cSpot = { x = x, y = y, metal = spot.metal, radius = radius, radiusSq = radius^2, noise = noise }
       tInsert(a.metalSpots, cSpot)
     end
@@ -1172,7 +1142,7 @@ local Crater = class(function(a, impact, renderer)
   if meteor.geothermal and world.geothermalAttribute then
     a.geothermalRadius = mCeil(world.geothermalRadius / elmosPerPixel)
     a.geothermalRadiusSq = a.geothermalRadius^2
-    a.geothermalNoise = WrapNoise(22, 1, a:PopSeed(), 1, 1)
+    a.geothermalNoise = M.WrapNoise(22, 1, a:PopSeed(), 1, 1)
   end
 
 
@@ -1180,7 +1150,7 @@ local Crater = class(function(a, impact, renderer)
     a.peakRadius = impact.peakRadius / elmosPerPixel
     a.peakRadiusSq = a.peakRadius ^ 2
     local baseN = 8 + mFloor(impact.peakRadius / 300)
-    a.peakNoise = NoisePatch(a.x, a.y, a.peakRadius, a:PopSeed(), impact.craterPeakHeight, 0.3, baseN-elmosPerPixelP2, 1, 0.5, 1, a:PopSeed(), 16, 0.75)
+    a.peakNoise = M.NoisePatch(a.x, a.y, a.peakRadius, a:PopSeed(), impact.craterPeakHeight, 0.3, baseN-elmosPerPixelP2, 1, 0.5, 1, a:PopSeed(), 16, 0.75)
   end
 
   if impact.terraceSeeds then
@@ -1191,7 +1161,7 @@ local Crater = class(function(a, impact, renderer)
     local terraceFlatWidth = terraceWidth * 0.5
     a.terraces = {}
     for i = 1, #impact.terraceSeeds do
-      a.terraces[i] = { max = tmin + (i*terraceWidth), noise = WrapNoise(12, terraceWidth*2, impact.terraceSeeds[i], 0.5, 2) }
+      a.terraces[i] = { max = tmin + (i*terraceWidth), noise = M.WrapNoise(12, terraceWidth*2, impact.terraceSeeds[i], 0.5, 2) }
     end
     a.terraceMin = tmin
   end
@@ -1202,18 +1172,18 @@ local Crater = class(function(a, impact, renderer)
   a.currentPixel = 0
 end)
 
-function Crater:AddAgeNoise()
+function M.Crater:AddAgeNoise()
   if self.ageNoise then return end
   if self.impact.meteor.age > 0 and self.totalradiusPlusWobble < 1000 then -- otherwise, way too much memory
-    self.ageNoise = NoisePatch(self.x, self.y, self.totalradiusPlusWobble, self:PopSeed(), 0.5-(self.impact.ageRatio*0.25), 0.33, 10-self.renderer.mapRuler.elmosPerPixelPowersOfTwo)
+    self.ageNoise = M.NoisePatch(self.x, self.y, self.totalradiusPlusWobble, self:PopSeed(), 0.5-(self.impact.ageRatio*0.25), 0.33, 10-self.renderer.mapRuler.elmosPerPixelPowersOfTwo)
   end
 end
 
-function Crater:PopSeed()
+function M.Crater:PopSeed()
   return tRemove(self.seedPacket)
 end
 
-function Crater:DistanceSq(x, y)
+function M.Crater:DistanceSq(x, y)
   local dx, dy = mAbs(x-self.x), mAbs(y-self.y)
   if doNotStore then return ((dx*dx) + (dy*dy)) end
   diffDistancesSq[dx] = diffDistancesSq[dx] or {}
@@ -1221,7 +1191,7 @@ function Crater:DistanceSq(x, y)
   return diffDistancesSq[dx][dy]
 end
 
-function Crater:Distance(x, y)
+function M.Crater:Distance(x, y)
   local dx, dy = mAbs(x-self.x), mAbs(y-self.y)
   if doNotStore then return sqrt((dx*dx) + (dy*dy)) end
   diffDistances[dx] = diffDistances[dx] or {}
@@ -1232,7 +1202,7 @@ function Crater:Distance(x, y)
   return diffDistances[dx][dy], diffDistancesSq[dx][dy]
 end
 
-function Crater:TerraceDistMod(distSq, angle)
+function M.Crater:TerraceDistMod(distSq, angle)
   if self.terraces then
     local terracesByDist = {}
     for i, t in ipairs(self.terraces) do
@@ -1260,7 +1230,7 @@ function Crater:TerraceDistMod(distSq, angle)
   return distSq
 end
 
-function Crater:HeightPixel(x, y)
+function M.Crater:HeightPixel(x, y)
   if x < self.xmin or x > self.xmax or y < self.ymin or y > self.ymax then return 0, 0, false end
   local impact = self.impact
   local meteor = self.impact.meteor
@@ -1360,7 +1330,7 @@ function Crater:HeightPixel(x, y)
   return height, alpha, add
 end
 
-function Crater:OneHeightPixel()
+function M.Crater:OneHeightPixel()
   local p = self.currentPixel
   local x = (p % self.width) + self.xmin
   local y = mFloor(p / self.width) + self.ymin
@@ -1369,7 +1339,7 @@ function Crater:OneHeightPixel()
   return x, y, height, alpha, add
 end
 
-function Crater:AttributePixel(x, y)
+function M.Crater:AttributePixel(x, y)
   local impact = self.impact
   local meteor = self.impact.meteor
   local world = self.impact.world
@@ -1470,7 +1440,7 @@ function Crater:AttributePixel(x, y)
   return 0
 end
 
-function Crater:GiveStartingHeight()
+function M.Crater:GiveStartingHeight()
   if self.startingHeight then return end
   if not self.renderer.heightBuf then return end
   local havg, hmin, hmax = self.renderer.heightBuf:GetCircle(self.x, self.y, self.radius)
@@ -1479,13 +1449,12 @@ end
 
 ----------------------------------------------------------
 
--- Meteor stores data, does not do any calcuations
-local Meteor = class(function(a, world, sx, sz, diameterImpactor, velocityImpactKm, angleImpact, densityImpactor, age, metal, geothermal, seedSeed, ramps, mirrorMeteor)
+-- M.Meteor stores data, does not do any calcuations
+M.Meteor = class(function(a, world, sx, sz, diameterImpactor, velocityImpactKm, angleImpact, densityImpactor, age, metal, geothermal, seedSeed, ramps, mirrorMeteor)
   debugEcho(sx, sz, diameterImpactor, age, mirrorMeteor)
   -- coordinates sx and sz are in spring coordinates (elmos)
   a.world = world
   a.sx, a.sz = mFloor(sx), mFloor(sz)
-  a.dispX, a.dispY = displayMapRuler:XZtoXY(a.sx, a.sz)
   a.diameterImpactor = diameterImpactor or 10
   -- debugEcho(mFloor(a.diameterImpactor) .. " meter object")
   a.velocityImpactKm = velocityImpactKm or 30
@@ -1499,17 +1468,17 @@ local Meteor = class(function(a, world, sx, sz, diameterImpactor, velocityImpact
   a.mirrorMeteor = mirrorMeteor
 end)
 
-function Meteor:Collide()
-  self.impact = Impact(self)
+function M.Meteor:Collide()
+  self.impact = M.Impact(self)
   self:PrepareDraw()
 end
 
-function Meteor:SetAge(age)
+function M.Meteor:SetAge(age)
   self.age = age
   self:Collide()
 end
 
-function Meteor:Delete(noMirror)
+function M.Meteor:Delete(noMirror)
   for i, m in pairs(self.world.meteors) do
     if m == self then
       tRemove(self.world.meteors, i)
@@ -1523,17 +1492,17 @@ function Meteor:Delete(noMirror)
   self = nil
 end
 
-function Meteor:NextSeed()
+function M.Meteor:NextSeed()
   self.seedSeed = NextSeed(self.seedSeed)
   self:Collide()
 end
 
-function Meteor:PreviousSeed()
+function M.Meteor:PreviousSeed()
   self.seedSeed = PreviousSeed(self.seedSeed)
   self:Collide()
 end
 
-function Meteor:ShiftUp()
+function M.Meteor:ShiftUp()
   local newMeteors = {}
   local shiftDown
   for i, m in ipairs(self.world.meteors) do
@@ -1554,7 +1523,7 @@ function Meteor:ShiftUp()
   self:PrepareDraw()
 end
 
-function Meteor:ShiftDown()
+function M.Meteor:ShiftDown()
   local newMeteors = {}
   local shiftUp
   for i = #self.world.meteors, 1, -1 do
@@ -1576,7 +1545,7 @@ function Meteor:ShiftDown()
   self:PrepareDraw()
 end
 
-function Meteor:Move(sx, sz, noMirror)
+function M.Meteor:Move(sx, sz, noMirror)
   if not noMirror and self.mirrorMeteor and type(self.mirrorMeteor) ~= "boolean" then
     local nsx, nsz = self.world:MirrorXZ(sx, sz)
     if nsx then self.mirrorMeteor:Move(nsx, nsz, true) end
@@ -1585,7 +1554,7 @@ function Meteor:Move(sx, sz, noMirror)
   self:Collide()
 end
 
-function Meteor:Resize(multiplier, noMirror)
+function M.Meteor:Resize(multiplier, noMirror)
   local targetRadius = self.impact.craterRadius * multiplier
   local targetRadiusM = targetRadius * self.world.metersPerElmo
   local targetDiameterM = targetRadiusM * 2
@@ -1608,15 +1577,15 @@ function Meteor:Resize(multiplier, noMirror)
   end
 end
 
-function Meteor:IncreaseMetal()
+function M.Meteor:IncreaseMetal()
   self:SetMetalSpotCount(self.metal+1)
 end
 
-function Meteor:DecreaseMetal()
+function M.Meteor:DecreaseMetal()
   self:SetMetalSpotCount(mMax(self.metal-1, 0))
 end
 
-function Meteor:SetMetalSpotCount(spotCount, noMirror)
+function M.Meteor:SetMetalSpotCount(spotCount, noMirror)
   local diff = spotCount - self.metal
   self.metal = spotCount
   self.world.metalSpotCount = self.world.metalSpotCount + diff
@@ -1626,7 +1595,7 @@ function Meteor:SetMetalSpotCount(spotCount, noMirror)
   self:Collide()
 end
 
-function Meteor:GeothermalToggle(noMirror)
+function M.Meteor:GeothermalToggle(noMirror)
   self.geothermal = not self.geothermal
   if self.geothermal then
     self.world.geothermalMeteorCount = self.world.geothermalMeteorCount + 1
@@ -1637,7 +1606,7 @@ function Meteor:GeothermalToggle(noMirror)
   self:Collide()
 end
 
-function Meteor:MetalGeothermal(noMirror, overwrite)
+function M.Meteor:MetalGeothermal(noMirror, overwrite)
   if self.metalGeothermalSet and not overwrite then return end
   local world = self.world
   if self.diameterImpactor > world.minGeothermalMeteorDiameter and self.diameterImpactor < world.maxGeothermalMeteorDiameter then
@@ -1657,19 +1626,19 @@ function Meteor:MetalGeothermal(noMirror, overwrite)
   end
 end
 
-function Meteor:AddRamp(angle, width)
+function M.Meteor:AddRamp(angle, width)
   -- width in meters
   local ramp = { angle = angle, width = width }
   tInsert(self.ramps, ramp)
   self:Collide()
 end
 
-function Meteor:ClearRamps()
+function M.Meteor:ClearRamps()
   self.ramps = {}
   self:Collide()
 end
 
-function Meteor:Mirror(binding)
+function M.Meteor:Mirror(binding)
   local nsx, nsz = self.world:MirrorXZ(self.sx, self.sz)
   if nsx then
     local bind
@@ -1679,37 +1648,22 @@ function Meteor:Mirror(binding)
   end
 end
 
-function Meteor:PrepareDraw()
-  self.rgb = { 0, (1-self.impact.ageRatio)*255, self.impact.ageRatio*255 }
-  self.dispX, self.dispY = displayMapRuler:XZtoXY(self.sx, self.sz)
-  self.dispCraterRadius = mCeil(self.impact.craterRadius / displayMapRuler.elmosPerPixel)
-  for r, ramp in pairs(self.ramps) do
-    ramp.dispX2, ramp.dispY2 = CirclePos(self.dispX, self.dispY, self.dispCraterRadius, ramp.angle)
-    self.ramps[r] = ramp
-  end
-  self.infoStr = self.dispX .. ", " .. self.dispY .. "\n" .. self.dispCraterRadius .. " radius" .. "\n" .. self.metal .. " metal" .. "\n" .. self.age .. " age" .. "\n" .. self.seedSeed .. " seed"
-  if self.geothermal then self.infoStr = self.infoStr .. "\ngeothermal" end
-  if self.impact and self.impact.blastNoise then self.infoStr = self.infoStr .. "\nblast rays" end
-  self.infoX = self.dispX - (self.dispCraterRadius * 1.5)
-  self.infoY = self.dispY - (self.dispCraterRadius * 1.5)
-end
-
 ----------------------------------------------------------
 
--- Impact does resolution-independent impact model calcuations, based on parameters from Meteor
+-- M.Impact does resolution-independent impact model calcuations, based on parameters from M.Meteor
 -- impact model equations based on http://impact.ese.ic.ac.uk/ImpactEffects/effects.pdf
-local Impact = class(function(a, meteor)
+M.Impact = class(function(a, meteor)
   a.meteor = meteor
   a.world = meteor.world
   a.seedPacket = CreateSeedPacket(meteor.seedSeed, 100)
   a:Model()
 end)
 
-function Impact:PopSeed()
+function M.Impact:PopSeed()
   return tRemove(self.seedPacket)
 end
 
-function Impact:Model()
+function M.Impact:Model()
   local world = self.world
   local meteor = self.meteor
 
@@ -1762,9 +1716,9 @@ function Impact:Model()
     self.meltSurface = self.craterRimHeight + self.craterMeltThickness - self.craterDepth
     -- debugEcho(self.energyImpact, self.meltVolume, self.meltThickness)
     self.craterPeakHeight = self.craterDepth * 0.5
-    self.peakRadialNoise = WrapNoise(16, 0.75, self:PopSeed())
+    self.peakRadialNoise = M.WrapNoise(16, 0.75, self:PopSeed())
     self.distWobbleAmount = MinMaxRandom(0.075, 0.15)
-    self.distNoise = WrapNoise(mMax(mCeil(self.craterRadius / 20), 8), self.distWobbleAmount, self:PopSeed(), 0.5, 3)
+    self.distNoise = M.WrapNoise(mMax(mCeil(self.craterRadius / 20), 8), self.distWobbleAmount, self:PopSeed(), 0.5, 3)
     -- debugEcho( mFloor(self.diameterImpactor), mFloor(self.diameterComplex), mFloor(self.depthComplex), self.diameterComplex/self.depthComplex, mFloor(self.diameterTransient), mFloor(self.depthTransient) )
     self.peakRadius = self.craterRadius / 5.5
   else
@@ -1775,8 +1729,8 @@ function Impact:Model()
     self.craterFalloff = self.craterRadius * 0.66
     self.rayHeight = (self.craterRimHeight / 2)
     self.distWobbleAmount = MinMaxRandom(0.05, 0.15)
-    self.distNoise = WrapNoise(mMax(mCeil(self.craterRadius / 35), 8), self.distWobbleAmount, self:PopSeed(), 0.3, 5)
-    self.rayNoise = WrapNoise(24, self.rayWobbleAmount, self:PopSeed(), 0.5, 3)
+    self.distNoise = M.WrapNoise(mMax(mCeil(self.craterRadius / 35), 8), self.distWobbleAmount, self:PopSeed(), 0.3, 5)
+    self.rayNoise = M.WrapNoise(24, self.rayWobbleAmount, self:PopSeed(), 0.5, 3)
   end
 
   self.metalSpots = {}
@@ -1821,19 +1775,19 @@ function Impact:Model()
   end
 
   if self.complex and world.erosion then
-    self.curveNoise = WrapNoise(mMax(mCeil(self.craterRadius / 25), 8), self.ageRatio * 0.5, self:PopSeed(), 0.3, 5)
+    self.curveNoise = M.WrapNoise(mMax(mCeil(self.craterRadius / 25), 8), self.ageRatio * 0.5, self:PopSeed(), 0.3, 5)
   end
 
-  self.heightNoise = WrapNoise(mMax(mCeil(self.craterRadius / 45), 8), self.heightWobbleAmount, self:PopSeed())
+  self.heightNoise = M.WrapNoise(mMax(mCeil(self.craterRadius / 45), 8), self.heightWobbleAmount, self:PopSeed())
   if meteor.age < world.blastRayAge then
-    self.blastNoise = WrapNoise(mMin(mMax(mCeil(self.craterRadius), 32), 512), 0.5, self:PopSeed(), 1, 1)
+    self.blastNoise = M.WrapNoise(mMin(mMax(mCeil(self.craterRadius), 32), 512), 0.5, self:PopSeed(), 1, 1)
     -- debugEcho(self.blastNoise.length)
   end
 end
 
 ----------------------------------------------------------
 
-local WrapNoise = class(function(a, length, intensity, seed, persistence, N, amplitude)
+M.WrapNoise = class(function(a, length, intensity, seed, persistence, N, amplitude)
   intensity = intensity or 1
   seed = seed or NewSeed()
   persistence = persistence or 0.25
@@ -1864,7 +1818,7 @@ local WrapNoise = class(function(a, length, intensity, seed, persistence, N, amp
   end
 end)
 
-function WrapNoise:Smooth(n)
+function M.WrapNoise:Smooth(n)
   local n1 = mFloor(n)
   local n2 = mCeil(n)
   if n1 == n2 then return self:Output(n1) end
@@ -1873,24 +1827,24 @@ function WrapNoise:Smooth(n)
   return val1 + (mSmoothstep(n1, n2, n) * d)
 end
 
-function WrapNoise:Rational(ratio)
+function M.WrapNoise:Rational(ratio)
   return self:Smooth((ratio * (self.length - 1)) + 1)
 end
 
-function WrapNoise:Radial(angle)
+function M.WrapNoise:Radial(angle)
   local n = ((angle + pi) / self.angleDivisor) + 1
   return self:Smooth(n)
 end
 
-function WrapNoise:Output(n)
+function M.WrapNoise:Output(n)
   return self.outValues[self:Clamp(n)]
 end
 
-function WrapNoise:Dist(n1, n2)
+function M.WrapNoise:Dist(n1, n2)
   return mAbs((n1 + self.halfLength - n2) % self.length - self.halfLength)
 end
 
-function WrapNoise:Clamp(n)
+function M.WrapNoise:Clamp(n)
   if n < 1 then
     n = n + self.length
   elseif n > self.length then
@@ -1901,7 +1855,7 @@ end
 
 ----------------------------------------------------------
 
-local LinearNoise = class(function(a, length, intensity, seed, persistence, N, amplitude)
+M.LinearNoise = class(function(a, length, intensity, seed, persistence, N, amplitude)
   intensity = intensity or 1
   seed = seed or NewSeed()
   persistence = persistence or 0.25
@@ -1916,7 +1870,7 @@ local LinearNoise = class(function(a, length, intensity, seed, persistence, N, a
   end
 end)
 
-function LinearNoise:Smooth(n)
+function M.LinearNoise:Smooth(n)
   local n1 = mFloor(n)
   local n2 = mCeil(n)
   if n1 == n2 then return self:Output(n1) end
@@ -1925,17 +1879,17 @@ function LinearNoise:Smooth(n)
   return val1 + (mSmoothstep(n1, n2, n) * d)
 end
 
-function LinearNoise:Rational(ratio)
+function M.LinearNoise:Rational(ratio)
   return self:Smooth((ratio * (self.length - 1)) + 1)
 end
 
-function LinearNoise:Output(n)
+function M.LinearNoise:Output(n)
   return self.outValues[mCeil(n)] or 0
 end
 
 ----------------------------------------------------------
 
-local TwoDimensionalNoise = class(function(a, seed, sideLength, intensity, persistence, N, amplitude, blackValue, whiteValue)
+M.TwoDimensionalNoise = class(function(a, seed, sideLength, intensity, persistence, N, amplitude, blackValue, whiteValue)
   sideLength = mCeil(sideLength)
   intensity = intensity or 1
   persistence = persistence or 0.25
@@ -1960,7 +1914,7 @@ local TwoDimensionalNoise = class(function(a, seed, sideLength, intensity, persi
   yx = nil
 end)
 
-function TwoDimensionalNoise:Get(x, y)
+function M.TwoDimensionalNoise:Get(x, y)
   x, y = mFloor(x), mFloor(y)
   if not self.xy[x] then return 0 end
   if not self.xy[x][y] then return 0 end
@@ -1969,7 +1923,7 @@ end
 
 ----------------------------------------------------------
 
-local NoisePatch = class(function(a, x, y, radius, seed, intensity, persistence, N, amplitude, blackValue, whiteValue, wrapSeed, wrapLength, wrapIntensity, wrapPersistence, wrapN, wrapAmplitude)
+M.NoisePatch = class(function(a, x, y, radius, seed, intensity, persistence, N, amplitude, blackValue, whiteValue, wrapSeed, wrapLength, wrapIntensity, wrapPersistence, wrapN, wrapAmplitude)
   a.x = x
   a.y = y
   a.radius = radius * ((wrapIntensity or 0) + 1)
@@ -1979,13 +1933,13 @@ local NoisePatch = class(function(a, x, y, radius, seed, intensity, persistence,
   a.ymin = y - a.radius
   a.ymax = y + a.radius
   -- debugEcho(radius, wrapIntensity or 0, a.radius, a.radiusSq)
-  a.twoD = TwoDimensionalNoise(seed, a.radius * 2, intensity, persistence, N, amplitude, blackValue, whiteValue)
+  a.twoD = M.TwoDimensionalNoise(seed, a.radius * 2, intensity, persistence, N, amplitude, blackValue, whiteValue)
   if wrapSeed then
-    a.wrap = WrapNoise(wrapLength, wrapIntensity, wrapSeed, wrapPersistence, wrapN, wrapAmplitude)
+    a.wrap = M.WrapNoise(wrapLength, wrapIntensity, wrapSeed, wrapPersistence, wrapN, wrapAmplitude)
   end
 end)
 
-function NoisePatch:Get(x, y)
+function M.NoisePatch:Get(x, y)
   if x < self.xmin or x > self.xmax or y < self.ymin or y > self.ymax then return 0 end
   local dx = x - self.x
   local dy = y - self.y
@@ -2006,26 +1960,10 @@ end
 
 -- end classes and methods organized by class --------------------------------
 
-local function SetOutputDirectory(outDirNew)
+function M.SetOutputDirectory(outDirNew)
   outDir = outDirNew
 end
 
 -- export module
 
-local Loony = {
-  World = World,
-  MapRuler = MapRuler,
-  HeightBuffer = HeightBuffer,
-  Renderer = Renderer,
-  Crater = Crater,
-  Impact = Impact,
-  Meteor = Meteor,
-  WrapNoise = WrapNoise,
-  LinearNoise = LinearNoise,
-  TwoDimensionalNoise = TwoDimensionalNoise,
-  NoisePatch = NoisePatch,
-
-  SetOutputDirectory = SetOutputDirectory,
-}
-
-return Loony
+return M
