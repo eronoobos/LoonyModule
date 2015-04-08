@@ -501,6 +501,7 @@ function M.World:Calculate()
   self.complexDepthScaleFactor = ((self.gravity / 1.6) + 1) / 2
   self.blastRayAgeDivisor = 100 / self.blastRayAge
   self:ResetMeteorAges()
+  M.UpdateWorld(self)
 end
 
 function M.World:Clear()
@@ -539,10 +540,11 @@ function M.World:RendererFrame(frame)
   local renderer = self.renderers[1]
   if renderer then
     renderer:Frame(frame)
+    M.FrameRenderer(renderer)
     if renderer.complete then
       tRemove(self.renderers, 1)
     end
-    return renderer
+    -- return renderer
   end
 end
 
@@ -896,6 +898,7 @@ function M.Renderer:Finish(frame)
   local timeDiff = frame - self.startFrame
   debugEcho(self.renderType .. " (" .. self.mapRuler.width .. "x" .. self.mapRuler.height .. ") rendered in " .. timeDiff .. " seconds")
   self.complete = true
+  M.CompleteRenderer(self)
 end
 
 function M.Renderer:EmptyPreinit()
@@ -1951,6 +1954,8 @@ end
 
 -- end classes and methods organized by class --------------------------------
 
+-- module export functions
+
 function M.SetOutputDirectory(outDirNew)
   outDir = outDirNew
 end
@@ -1968,6 +1973,14 @@ function M.GetAttributeRatioRGB(attribute)
   local rgb = AttributeDict[attribute].ratioRGB
   return rgb[1], rgb[2], rgb[3]
 end
+
+-- module callins
+
+function M.UpdateWorld(myWorld) end
+
+function M.FrameRenderer(renderer) end
+
+function M.CompleteRenderer(renderer) end
 
 -- export module
 
