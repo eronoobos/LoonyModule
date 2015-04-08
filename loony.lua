@@ -147,17 +147,18 @@ local WorldSaveBlackList = {
   "renderers",
   "heightBuf",
   "mirrorMeteor",
-  "rgb",
-  "dispX",
-  "dispY",
-  "dispX2",
-  "dispY2",
-  "infoStr",
-  "dispCraterRadius",
   "complexDiameter",
   "complexDiameterCutoff",
   "complexDepthScaleFactor",
   "blastRayAgeDivisor",
+  "fullMapRuler",
+  "L3DTMapRuler",
+  "metalMapRuler",
+  "heightMapRuler",
+  "mapRulerNames",
+  "mapSizeX",
+  "mapSizeZ",
+  "metersPerSquare",
 }
 
 local WSBL = {}
@@ -181,10 +182,10 @@ local CommandWords = {
     myWorld:Clear()
   end,
   height = function(words, myWorld, uiCommand)
-    myWorld:RenderHeightImage(uiCommand, myWorld.mapRulerNames[words[3]] or myWorld.heightMapRuler)
+    myWorld:RenderHeightImage(myWorld.mapRulerNames[words[3]] or myWorld.heightMapRuler, uiCommand)
   end,
   attributes = function(words, myWorld, uiCommand)
-    myWorld:RenderAttributes(uiCommand, myWorld.mapRulerNames[words[3]] or myWorld.heightMapRuler)
+    myWorld:RenderAttributes(myWorld.mapRulerNames[words[3]] or myWorld.heightMapRuler, "file", uiCommand)
   end,
   metal = function(words, myWorld, uiCommand)
     myWorld:RenderMetal(uiCommand)
@@ -219,8 +220,8 @@ local CommandWords = {
     local mapRuler = myWorld.mapRulerNames[words[3]] or myWorld.heightMapRuler
     myWorld:RenderFeatures()
     myWorld:RenderMetal()
-    myWorld:RenderAttributes(nil, mapRuler)
-    myWorld:RenderHeightImage(uiCommand, mapRuler)
+    myWorld:RenderAttributes(mapRuler, "file")
+    myWorld:RenderHeightImage(mapRuler, uiCommand)
   end,
 }
 
@@ -411,10 +412,6 @@ local function Gaussian(x, c)
   return gaussians[x][c]
 end
 
-local function EndCommand(command)
-
-end
-
 local function WriteMetalSpot(dataTarget, x, z, metal)
     local pixels = 5
     if metal <= 1 then
@@ -601,33 +598,34 @@ function M.World:AddMeteor(sx, sz, diameterImpactor, velocityImpactKm, angleImpa
   return m
 end
 
-function M.World:RenderAttributes(uiCommand, mapRuler)
+function M.World:RenderAttributes(mapRuler, renderSubtype, uiCommand)
   mapRuler = mapRuler or self.heightMapRuler
+  renderSubtype = renderSubtype or "file"
   if mapRuler == self.fullMapRuler then
     doNotStore = true
     ClearSpeedupStorage()
   end
-  local renderer = M.Renderer(self, mapRuler, 8000, "Attributes", uiCommand)
+  local renderer = M.Renderer(self, mapRuler, 8000, "Attributes", renderSubtype, uiCommand)
   tInsert(self.renderers, renderer)
 end
 
-function M.World:RenderHeightImage(uiCommand, mapRuler)
+function M.World:RenderHeightImage(mapRuler, uiCommand)
   mapRuler = mapRuler or self.L3DTMapRuler
   doNotStore = true
   ClearSpeedupStorage()
   local tempHeightBuf = M.HeightBuffer(self, mapRuler)
-  tInsert(self.renderers, M.Renderer(self, mapRuler, 4000, "Height", uiCommand, tempHeightBuf))
-  tInsert(self.renderers, M.Renderer(self, mapRuler, 15000, "HeightImage", uiCommand, tempHeightBuf, true))
+  tInsert(self.renderers, M.Renderer(self, mapRuler, 4000, "Height", "data", uiCommand, tempHeightBuf))
+  tInsert(self.renderers, M.Renderer(self, mapRuler, 15000, "HeightImage", "file", uiCommand, tempHeightBuf))
 end
 
-function M.World:RenderHeight(uiCommand, mapRuler)
+function M.World:RenderHeight(mapRuler, uiCommand)
   mapRuler = mapRuler or self.heightMapRuler
   local tempHeightBuf = M.HeightBuffer(self, mapRuler)
-  tInsert(self.renderers, M.Renderer(self, mapRuler, 4000, "Height", uiCommand, tempHeightBuf))
+  tInsert(self.renderers, M.Renderer(self, mapRuler, 4000, "Height", "data", uiCommand, tempHeightBuf))
 end
 
 function M.World:RenderMetal(uiCommand)
-  local renderer = M.Renderer(self, self.metalMapRuler, 16000, "Metal", uiCommand, nil, true)
+  local renderer = M.Renderer(self, self.metalMapRuler, 16000, "Metal", "none", uiCommand)
   tInsert(self.renderers, renderer)
 end
 
@@ -842,32 +840,33 @@ end
 
 ----------------------------------------------------------
 
-M.Renderer = class(function(a, world, mapRuler, pixelsPerFrame, renderType, uiCommand, heightBuf, noCraters, radius)
-  a.uiCommand = uiCommand or ""
+M.Renderer = class(function(a, world, mapRuler, pixelsPerFrame, renderType, renderSubtype, uiCommand, heightBuf)
   a.world = world
-  a.mapRuler = mapRuler
-  a.pixelsPerFrame = pixelsPerFrame
-  a.renderType = renderType
+  a.mapRuler = mapRuler or world.heightMapRuler
+  a.pixelsPerFrame = pixelsPerFrame or 1000
+  a.renderType = renderType or "Height"
+  a.renderSubtype = renderSubtype or "none"
+  a.uiCommand = uiCommand or ""
   a.heightBuf = heightBuf
-  a.radius = radius
   a.craters = {}
   a.totalCraterArea = 0
-  if not noCraters then
-    for i, m in ipairs(world.meteors) do
-      local crater = M.Crater(m.impact, a)
-      tInsert(a.craters, crater)
-      a.totalCraterArea = a.totalCraterArea + crater.area
-    end
-  end
   a.pixelsRendered = 0
   a.pixelsToRenderCount = mapRuler.width * mapRuler.height
   a.totalPixels = a.pixelsToRenderCount+0
-  a.PreinitFunc = a[a.renderType .. "Preinit"] or a.EmptyPreinit
-  a.InitFunc = a[a.renderType .. "Init"] or a.EmptyInit
+  a.PreinitFunc = a[a.renderType .. "Preinit"] or a.Empty
+  a.InitFunc = a[a.renderType .. "Init"] or a.Empty
   a.FrameFunc = a[a.renderType .. "Frame"] -- if there's no framefunc what's the point
-  a.FinishFunc = a[a.renderType .. "Finish"] or a.EmptyFinish
+  a.FinishFunc = a[a.renderType .. "Finish"] or a.Empty
   a:Preinitialize()
 end)
+
+function M.Renderer:GetCraters()
+  for i, m in ipairs(self.world.meteors) do
+    local crater = M.Crater(m.impact, self)
+    tInsert(self.craters, crater)
+    self.totalCraterArea = self.totalCraterArea + crater.area
+  end
+end
 
 function M.Renderer:Preinitialize()
   self:PreinitFunc()
@@ -894,28 +893,18 @@ end
 
 function M.Renderer:Finish(frame)
   self:FinishFunc()
-  if not self.dontEndUiCommand then EndCommand(self.uiCommand) end
+  if not self.dontEndUiCommand then M.EndUiCommand(self.uiCommand) end
   local timeDiff = frame - self.startFrame
   debugEcho(self.renderType .. " (" .. self.mapRuler.width .. "x" .. self.mapRuler.height .. ") rendered in " .. timeDiff .. " seconds")
   self.complete = true
   M.CompleteRenderer(self)
 end
 
-function M.Renderer:EmptyPreinit()
-  return
-end
-
-function M.Renderer:EmptyInit()
-  -- debugEcho("emptyinit")
-  return
-end
-
- function M.Renderer:EmptyFinish()
-  -- debugEcho("emptyfinish")
-  return
+function M.Renderer:Empty()
 end
 
 function M.Renderer:HeightInit()
+  self:GetCraters()
   self.totalProgress = self.totalCraterArea
   self.metalSpots = {}
 end
@@ -949,7 +938,7 @@ end
 
 function M.Renderer:HeightFinish()
   self.dontEndUiCommand = true
-  if self.uiCommand == "heightpreview" then
+  if self.renderSubtype == "data" then
     self.data = self.heightBuf
   end
 end
@@ -990,9 +979,10 @@ function M.Renderer:HeightImageFinish()
 end
 
 function M.Renderer:AttributesInit()
-  if self.uiCommand == "attributespreview" then
+  self:GetCraters()
+  if self.renderSubtype == "data" then
     self.data = {}
-  else
+  elseif self.renderSubtype == "file" then
     FWriteOpen("attrib_" .. self.mapRuler.width .. "x" .. self.mapRuler.height, "pbm")
     FWrite("P6 " .. tostring(self.mapRuler.width) .. " " .. tostring(self.mapRuler.height) .. " 255 ")
   end
@@ -1013,10 +1003,10 @@ function M.Renderer:AttributesFrame()
         attribute = a
       end
     end
-    if self.uiCommand == "attributespreview" then
+    if self.renderSubtype == "data" then
       self.data[x] = self.data[x] or {}
       self.data[x][y] = attribute
-    else
+    elseif self.renderSubtype == "file" then
       FWrite(threechars)
     end
   end
@@ -1025,9 +1015,7 @@ function M.Renderer:AttributesFrame()
 end
 
 function M.Renderer:AttributesFinish()
-  if self.uiCommand == "attributespreview" then
-
-  else
+  if self.renderSubtype == "file" then
     FWriteClose()
   end
 end
@@ -1467,6 +1455,7 @@ end)
 
 function M.Meteor:Collide()
   self.impact = M.Impact(self)
+  M.UpdateMeteor(self)
 end
 
 function M.Meteor:SetAge(age)
@@ -1974,13 +1963,22 @@ function M.GetAttributeRatioRGB(attribute)
   return rgb[1], rgb[2], rgb[3]
 end
 
+function M.AddToWorldSaveBlacklist(key)
+  tInsert(WorldSaveBlackList, key)
+  WSBL[key] = 1
+end
+
 -- module callins
+
+function M.UpdateMeteor(meteor) end
 
 function M.UpdateWorld(myWorld) end
 
 function M.FrameRenderer(renderer) end
 
 function M.CompleteRenderer(renderer) end
+
+function M.EndUiCommand(uiCommand) end
 
 -- export module
 
