@@ -198,7 +198,7 @@ local CommandWords = {
     myWorld:RenderAttributes(myWorld.mapRulerNames[words[3]] or myWorld.heightMapRuler, "file", uiCommand)
   end,
   metal = function(words, myWorld, uiCommand)
-    myWorld:RenderMetal(uiCommand)
+    myWorld:RenderMetalFiles(uiCommand)
   end,
   features = function(words, myWorld, uiCommand)
     myWorld:RenderFeatures(uiCommand)
@@ -635,11 +635,16 @@ function M.World:RenderHeight(mapRuler, uiCommand)
 end
 
 function M.World:RenderMetal(uiCommand)
-  local renderer = M.Renderer(self, self.metalMapRuler, 16000, "Metal", "none", uiCommand)
+  local renderer = M.Renderer(self, self.metalMapRuler, 16000, "Metal", "data", uiCommand)
   tInsert(self.renderers, renderer)
 end
 
-function M.World:RenderFeatures(uiCommand)
+function M.World:RenderMetalFiles(uiCommand)
+  local renderer = M.Renderer(self, self.metalMapRuler, 16000, "Metal", "file", uiCommand)
+  tInsert(self.renderers, renderer)
+end
+
+function M.World:RenderFeatures()
   FWriteOpen("features", "lua", "w")
   FWrite("local setcfg = {\n\tunitlist = {\n\t},\n\tbuildinglist = {\n\t},\n\tobjectlist = {\n")
   for i, m in pairs(self.meteors) do
@@ -650,6 +655,16 @@ function M.World:RenderFeatures(uiCommand)
   FWrite("\t},\n}\nreturn setcfg")
   FWriteClose()
   debugEcho("wrote features lua")
+end
+
+function M.World:GetFeaturelist()
+  local objectlist = {}
+  for i, m in pairs(self.meteors) do
+    if m.geothermal then
+      tInsert(objectlist, {name = 'GeoVent', x = m.sx, z = m.sz, rot = "180"})
+    end
+  end
+  return objectlist
 end
 
 function M.World:MirrorXZ(x, z)
@@ -1043,22 +1058,38 @@ function M.Renderer:MetalPreinit()
 end
 
 function M.Renderer:MetalInit()
-  FWriteOpen("metal", "lua", "w")
-  FWrite("return {\n\tspots = {\n")
+  self.data = {}
+  for x = 0, self.mapRuler.width-1 do
+    self.data[x] = {}
+    for y = 0, self.mapRuler.height-1 do
+      self.data[x][y] = 0
+    end
+  end
+  if self.renderSubtype == "file" then
+    FWriteOpen("metal", "lua", "w")
+    FWrite("return {\n\tspots = {\n")
+  end
   for i, spot in pairs(self.metalSpots) do
-    FWrite("\t\t{x = " .. spot.x .. ", z = " .. spot.z .. ", metal = " .. spot.metal .. "},\n")
+    if self.renderSubtype == "file" then
+      FWrite("\t\t{x = " .. spot.x .. ", z = " .. spot.z .. ", metal = " .. spot.metal .. "},\n")
+    end
     WriteMetalSpot(self.data, spot.x, spot.z, spot.metal)
   end
-  FWrite("\t}\n}")
-  FWriteClose()
-  debugEcho("wrote metal to data and wrote metal config lua")
-  FWriteOpen("metal", "pbm")
-  FWrite("P6 " .. tostring(self.mapRuler.width) .. " " .. tostring(self.mapRuler.height) .. " 255 ")
-  self.zeroTwoChars = string.char(0) .. string.char(0)
-  self.blackThreeChars = string.char(0) .. string.char(0) .. string.char(0)
+  if self.renderSubtype == "file" then
+    FWrite("\t}\n}")
+    FWriteClose()
+    debugEcho("wrote metal to data and wrote metal config lua")
+    FWriteOpen("metal", "pbm")
+    FWrite("P6 " .. tostring(self.mapRuler.width) .. " " .. tostring(self.mapRuler.height) .. " 255 ")
+    self.zeroTwoChars = string.char(0) .. string.char(0)
+    self.blackThreeChars = string.char(0) .. string.char(0) .. string.char(0)
+  end
 end
 
 function M.Renderer:MetalFrame()
+  if self.renderSubtype == "data" then
+    return self.totalProgress + 1
+  end
   local pixelsThisFrame = mMin(self.pixelsPerFrame, self.pixelsToRenderCount)
   local pMin = self.totalPixels - self.pixelsToRenderCount
   local pMax = pMin + pixelsThisFrame
@@ -1077,7 +1108,7 @@ function M.Renderer:MetalFrame()
 end
 
 function M.Renderer:MetalFinish()
-  FWriteClose()
+  if self.renderSubtype == "file" then FWriteClose() end
 end
 
 ----------------------------------------------------------
