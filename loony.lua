@@ -453,31 +453,27 @@ end
 
 -- classes and methods organized by class: -----------------------------------
 
-M.World = class(function(a, mapSize512X, mapSize512Z, metersPerElmo, baselevel, gravity, density, mirror, underlyingPerlin, erosion)
+M.World = class(function(a, mapSize512X, mapSize512Z, metersPerElmo, gravity, density, mirror, metalTarget, geothermalTarget, showerRamps)
   a.mapSize512X = mapSize512X or 8
   a.mapSize512Z = mapSize512Z or 8
   a.metersPerElmo = metersPerElmo or 1 -- meters per elmo for meteor simulation model only
-  a.baselevel = baselevel or 0
   a.gravity = gravity or (Game.gravity / 130) * 9.8
   a.density = density or (Game.mapHardness / 100) * 2500
   a.mirror = mirror or "none"
-  a.minMetalMeteorDiameter = 2
-  a.metalMeteorDiameter = 50
-  a.metalMeteorTarget = 20
+  a.metalTarget = metalTarget or 20
+  a.geothermalTarget = geothermalTarget or 4
+  a.showerRamps = showerRamps
+  a.rampMinRadius = 100 -- elmos
   a.metalSpotAmount = 2.0
   a.metalSpotRadius = 50 -- elmos
   a.metalSpotDepth = 20
-  a.minGeothermalMeteorDiameter = 20
-  a.maxGeothermalMeteorDiameter = 100
-  a.geothermalMeteorTarget = 4
   a.geothermalRadius = 16 -- elmos
   a.geothermalDepth = 10
   a.metalAttribute = true -- draw metal spots on the attribute map?
   a.geothermalAttribute = true -- draw geothermal vents on the attribute map?
   a.rimTerracing = false
   a.blastRayAge = 4
-  a.underlyingPerlin = underlyingPerlin
-  a.erosion = true -- erosion
+  a.erosion = true -- add bowl power noise to complex craters
   -- local echostr = ""
   -- for k, v in pairs(a) do echostr = echostr .. tostring(k) .. "=" .. tostring(v) .. " " end
   -- debugEcho(echostr)
@@ -501,6 +497,10 @@ function M.World:Calculate()
     metal = self.metalMapRuler,
   }
 
+  self.metalSpotDiameter = self.metalSpotRadius * 2
+  self.metalSpotSeparation = self.metalSpotDiameter * 2.5
+  self.metalSpotTotalRadius = self.metalSpotRadius + self.metalSpotSeparation
+  self.metalSpotTotalArea = pi * (self.metalSpotTotalRadius ^ 2)
   self.complexDiameter = 3200 / (self.gravity / 9.8)
   local Dc = self.complexDiameter / 1000
   self.complexDiameterCutoff = ((Dc / 1.17) * (Dc ^ 0.13)) ^ (1/1.13)
@@ -585,7 +585,7 @@ function M.World:MeteorShower(number, minDiameter, maxDiameter, minVelocity, max
   end
   for i = #self.meteors, 1, -1 do
     local m = self.meteors[i]
-    m:MetalGeothermal()
+    m:MetalGeothermalRamp()
   end
   self:ResetMeteorAges()
   debugEcho(#self.meteors, self.metalSpotCount, self.geothermalMeteorCount)
@@ -983,7 +983,7 @@ function M.Renderer:HeightImageFrame()
     local x = (p % self.mapRuler.width) + 1
     -- local y = self.mapRuler.height - mFloor(p / self.mapRuler.width) --pgm goes backwards y?
     local y = mFloor(p / self.mapRuler.width) + 1
-    local pixelHeight = heightBuf:Get(x, y) or self.world.baselevel
+    local pixelHeight = heightBuf:Get(x, y) or 0
     local pixelColor = mFloor(((pixelHeight - heightBuf.minHeight) / heightDif) * 65535)
     local twochars = uint16big(pixelColor)
     FWrite(twochars)
@@ -1630,31 +1630,78 @@ function M.Meteor:GeothermalToggle(noMirror)
   self:Collide()
 end
 
-function M.Meteor:MetalGeothermal(noMirror, overwrite)
-  if self.metalGeothermalSet and not overwrite then return end
+function M.Meteor:BlockedMetalGeothermal()
+  if not self.impact then self:Collide() end
+  local meteors = self.world.meteors
+  local blocked = false
+  for i = #meteors, 1, -1 do
+    if m == self then break end
+    local m = meteors[i]
+    if not m.impact then m:Collide() end
+    if m.geothermal or m.metal > 0 then
+      local dx = mAbs(m.sx - self.sx)
+      local dz = mAbs(m.sz - self.sz)
+      local distSq = (dx*dx) + (dz*dz)
+      local radiiSq = (m.impact.craterRadius + self.impact.craterRadius) ^ 2
+      if distSq < radiiSq then
+        blocked = true
+        break
+      end
+    end
+  end
+  return blocked
+end
+
+function M.Meteor:MetalGeothermalRamp(noMirror, overwrite)
+  if self.metalGeothermalRampSet and not overwrite then return end
+  if not self.impact then self:Collide() end
   local world = self.world
-  if self.diameterImpactor > world.minGeothermalMeteorDiameter and self.diameterImpactor < world.maxGeothermalMeteorDiameter then
-    if world.geothermalMeteorCount < world.geothermalMeteorTarget then
-      if not self.geothermal then world.geothermalMeteorCount = world.geothermalMeteorCount + 1 end
+  local impact = self.impact
+  local metalMinRadius = world.metalSpotRadius
+  local blocked = self:BlockedMetalGeothermal()
+  if not blocked and impact.craterRadius > world.geothermalRadius then
+    if world.geothermalMeteorCount < world.geothermalTarget then
+      if not self.geothermal then
+        world.geothermalMeteorCount = world.geothermalMeteorCount + 1
+      end
       self.geothermal = true
+      metalMinRadius = world.metalSpotTotalRadius
     end
   end
-  if self.diameterImpactor > world.minMetalMeteorDiameter then
-    if world.metalSpotCount < world.metalMeteorTarget then
-      self:SetMetalSpotCount(mCeil(self.diameterImpactor / world.metalMeteorDiameter))
+  if not blocked and impact.craterRadius > metalMinRadius then
+    if world.metalSpotCount < world.metalTarget then
+      local num = mFloor( (pi*(impact.craterRadius ^ 2)) / world.metalSpotTotalArea )
+      self:SetMetalSpotCount(num, true)
     end
   end
-  self.metalGeothermalSet = true
+  if world.showerRamps and impact.craterRadius > world.rampMinRadius then
+    debugEcho("RAMP")
+    local angle, width = self:AddRamp()
+    if mRandom() < 0.5 then self:AddRamp(AngleAdd(angle, pi)) end
+  end
+  self.metalGeothermalRampSet = true
   if not noMirror and self.mirrorMeteor and type(self.mirrorMeteor) ~= boolean then
-    self.mirrorMeteor:MetalGeothermal(true)
+    if not self.mirrorMeteor.geothermal and self.geothermal then
+      world.geothermalMeteorCount = world.geothermalMeteorCount + 1
+    end
+    self.mirrorMeteor.geothermal = self.geothermal
+    self.mirrorMeteor:SetMetalSpotCount(self.metal, true)
+    for r, ramp in pairs(self.ramps) do
+      self.mirrorMeteor:AddRamp(ramp.angle, ramp.width)
+    end
+    self.mirrorMeteor.metalGeothermalRampSet = true
+    -- self.mirrorMeteor:MetalGeothermalRamp(true)
   end
 end
 
 function M.Meteor:AddRamp(angle, width)
+  angle = angle or MinMaxRandom(0, twicePi)
+  width = width or 500
   -- width in meters
   local ramp = { angle = angle, width = width }
   tInsert(self.ramps, ramp)
   self:Collide()
+  return angle, width
 end
 
 function M.Meteor:ClearRamps()
@@ -1765,8 +1812,8 @@ function M.Impact:Model()
       slots = slots + 1
     end
     local dist = 0
-    local metalSpotDiameter = world.metalSpotRadius * 2
-    local metalSpotSeparation = metalSpotDiameter * 2.5
+    local metalSpotDiameter = world.metalSpotDiameter -- world.metalSpotRadius * 2
+    local metalSpotSeparation = world.metalSpotSeparation -- metalSpotDiameter * 2.5
     if slots > 1 then dist = metalSpotSeparation / 1.9 end
     if self.peakRadius and not meteor.geothermal then
       dist = self.peakRadius * (1+self.peakRadialNoise.intensity)
