@@ -1,7 +1,7 @@
-package.path = package.path .. ";LoonyModule/?.lua"
-require "class"
+if not require then require = include end
+require "LoonyModule/class.lua"
 
-local Perlin = require "perlin"
+local Perlin = require "LoonyModule/perlin.lua"
 
 local M = {} -- module
 
@@ -19,6 +19,16 @@ local mRandom = math.random
 if love then mRandom = love.math.random end
 local mRandomSeed = math.randomseed
 if love then mRandomSeed = love.math.setRandomSeed end
+
+local pi = math.pi
+local twicePi = math.pi * 2
+local piHalf = math.pi / 2
+local piEighth = math.pi / 8
+local piTwelfth = math.pi / 12
+local piSixteenth = math.pi / 16
+local twoSqrtTwo = 2 * math.sqrt(2)
+local naturalE = math.exp(1)
+local radiansPerDegree = math.pi / 180
 
 local mSqrt = math.sqrt
 local mMin = math.min
@@ -939,7 +949,7 @@ end
 function M.Renderer:HeightFinish()
   self.dontEndUiCommand = true
   if self.renderSubtype == "data" then
-    self.data = self.heightBuf
+    self.data = self.heightBuf.heights
   end
 end
 
