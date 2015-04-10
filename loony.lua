@@ -466,14 +466,18 @@ M.World = class(function(a, mapSize512X, mapSize512Z, metersPerElmo, gravity, de
   a.rampMinRadius = 100 -- elmos
   a.metalSpotAmount = 2.0
   a.metalSpotRadius = 50 -- elmos
-  a.metalSpotDepth = 20
+  a.metalSpotDepth = 15
   a.geothermalRadius = 16 -- elmos
-  a.geothermalDepth = 10
+  a.geothermalDepth = 15
+  a.metalHeight = true -- draw metal depressions on the height map?
+  a.geothermalHeight = true -- draw geothermal depressions on the height map?
   a.metalAttribute = true -- draw metal spots on the attribute map?
   a.geothermalAttribute = true -- draw geothermal vents on the attribute map?
   a.rimTerracing = false
   a.blastRayAge = 4
   a.erosion = true -- add bowl power noise to complex craters
+  a.underlyingPerlin = true
+  a.underlyingPerlinHeight = 50
   -- local echostr = ""
   -- for k, v in pairs(a) do echostr = echostr .. tostring(k) .. "=" .. tostring(v) .. " " end
   -- debugEcho(echostr)
@@ -931,7 +935,11 @@ end
 function M.Renderer:HeightInit()
   self:GetCraters()
   self.totalProgress = self.totalCraterArea
-  self.metalSpots = {}
+  if self.world.underlyingPerlin then
+    --seed, sideLength, intensity, persistence, N, amplitude, blackValue, whiteValue)
+    local perlin = M.TwoDimensionalNoise(NewSeed(), mMax(self.mapRuler.width, self.mapRuler.height), self.world.underlyingPerlinHeight, 0.28, 10-self.mapRuler.elmosPerPixelPowersOfTwo)
+    self.heightBuf.heights = perlin.xy
+  end
 end
 
 function M.Renderer:HeightFrame()
@@ -1201,7 +1209,7 @@ end)
 function M.Crater:AddAgeNoise()
   if self.ageNoise then return end
   if self.impact.meteor.age > 0 and self.totalradiusPlusWobble < 1000 then -- otherwise, way too much memory
-    self.ageNoise = M.NoisePatch(self.x, self.y, self.totalradiusPlusWobble, self:PopSeed(), 0.5-(self.impact.ageRatio*0.25), 0.33, 10-self.renderer.mapRuler.elmosPerPixelPowersOfTwo)
+    self.ageNoise = M.NoisePatch(self.x, self.y, self.totalradiusPlusWobble, self:PopSeed(), 0.5, 0.33, 10-self.renderer.mapRuler.elmosPerPixelPowersOfTwo)
   end
 end
 
@@ -1301,22 +1309,6 @@ function M.Crater:HeightPixel(x, y)
       rimRatioPower = mMix(rimRatioPower, smooth, impact.ageRatio)
     end
     height = rimHeight - ((1 - rimRatioPower)*impact.craterDepth)
-    --[[
-    if self.geothermalNoise then
-      if realDistSq < self.geothermalRadiusSq * 2 then
-        local geoWobbly = self.geothermalNoise:Radial(angle) + 1
-        local geoRadiusSqWobbled = self.geothermalRadiusSq * geoWobbly
-        local geoRatio = mMin(1, (realDistSq / geoRadiusSqWobbled) ^ 0.5)
-        height = height - ((1-geoRatio) * world.geothermalDepth)
-      end
-    end
-    if meteor.metal > 0 then
-      for i, spot in pairs(self.metalSpots) do
-        local metal = spot.noise:Get(x, y)
-        height = height - metal
-      end
-    end
-    ]]--
     if impact.complex then
       if self.peakNoise then
         local peak = self.peakNoise:Get(x, y)
@@ -1353,6 +1345,20 @@ function M.Crater:HeightPixel(x, y)
     end
   end
   if self.ageNoise then height = mMix(height, height * self.ageNoise:Get(x, y), impact.ageRatio) end
+  if world.geothermalHeight and self.geothermalNoise then
+    if realDistSq < self.geothermalRadiusSq * 2 then
+      local geoWobbly = self.geothermalNoise:Radial(angle) + 1
+      local geoRadiusSqWobbled = self.geothermalRadiusSq * geoWobbly
+      local geoRatio = mMin(1, (realDistSq / geoRadiusSqWobbled) ^ 0.5)
+      height = height - ((1-geoRatio) * world.geothermalDepth)
+    end
+  end
+  if world.metalHeight and meteor.metal > 0 then
+    for i, spot in pairs(self.metalSpots) do
+      local metal = spot.noise:Get(x, y)
+      height = height - metal
+    end
+  end
   return height, alpha, add
 end
 
@@ -1696,7 +1702,7 @@ end
 
 function M.Meteor:AddRamp(angle, width)
   angle = angle or MinMaxRandom(0, twicePi)
-  width = width or 500
+  width = width or 800
   -- width in meters
   local ramp = { angle = angle, width = width }
   tInsert(self.ramps, ramp)
@@ -1800,7 +1806,7 @@ function M.Impact:Model()
     self.craterFalloff = self.craterRadius * 0.66
     self.rayHeight = (self.craterRimHeight / 2)
     self.distWobbleAmount = MinMaxRandom(0.05, 0.15)
-    self.distNoise = M.WrapNoise(mMax(mCeil(self.craterRadius / 35), 8), self.distWobbleAmount, self:PopSeed(), 0.3, 5)
+    self.distNoise = M.WrapNoise(mMax(mCeil(self.craterRadius / 35), 8), self.distWobbleAmount, self:PopSeed(), 0.35, 5)
     self.rayNoise = M.WrapNoise(24, self.rayWobbleAmount, self:PopSeed(), 0.5, 3)
   end
 
