@@ -474,7 +474,7 @@ M.World = class(function(a, mapSize512X, mapSize512Z, metersPerElmo, gravity, de
   a.metalAttribute = true -- draw metal spots on the attribute map?
   a.geothermalAttribute = true -- draw geothermal vents on the attribute map?
   a.rimTerracing = false
-  a.blastRayAge = 4
+  a.blastRayCraterNumber = 3
   a.erosion = true -- add bowl power noise to complex craters
   a.underlyingPerlin = true
   a.underlyingPerlinHeight = 50
@@ -510,6 +510,7 @@ function M.World:Calculate()
   self.complexDiameterCutoff = ((Dc / 1.17) * (Dc ^ 0.13)) ^ (1/1.13)
   self.complexDiameterCutoff = self.complexDiameterCutoff * 1000
   self.complexDepthScaleFactor = ((self.gravity / 1.6) + 1) / 2
+  self.blastRayAge = mCeil( (100 / 10) * self.blastRayCraterNumber )
   self.blastRayAgeDivisor = 100 / self.blastRayAge
   self:ResetMeteorAges()
   M.UpdateWorld(self)
@@ -597,6 +598,8 @@ end
 
 function M.World:ResetMeteorAges()
   if not self.meteors then return end
+  self.blastRayAge = mCeil( (100 / #self.meteors) * self.blastRayCraterNumber )
+  self.blastRayAgeDivisor = 100 / self.blastRayAge
   for i, m in pairs(self.meteors) do
     m:SetAge(((#self.meteors-i)/#self.meteors)*100)
   end
