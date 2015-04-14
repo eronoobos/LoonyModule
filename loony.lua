@@ -3,7 +3,7 @@ local perlinPath = "LoonyModule/perlin.lua"
 if not require then
   require = include
 end
-if package.path then package.path = package.path .. ';LoonyModule/?.lua' end
+if package and package.path then package.path = package.path .. ';LoonyModule/?.lua' end
 if love then
   classPath = "LoonyModule.class"
   perlinPath = "LoonyModule.perlin"
@@ -344,7 +344,7 @@ end
 
 local function VaryWithinBounds(value, variance, minimum, maximum)
   if not value then return nil end
-  return mMax(mMin(value*RandomVariance(variance), maximum), minimum)
+  return mMax(mMin(value+RandomVariance(variance), maximum), minimum)
 end
 
 local function uint32little(n)
@@ -1652,16 +1652,17 @@ function M.Meteor:BlockedMetalGeothermal()
   local meteors = self.world.meteors
   local blocked = false
   for i = #meteors, 1, -1 do
-    if m == self then break end
     local m = meteors[i]
-    if not m.impact then m:Collide() end
+    if m == self then break end
     if m.geothermal or m.metal > 0 then
+      if not m.impact then m:Collide() end
       local dx = mAbs(m.sx - self.sx)
       local dz = mAbs(m.sz - self.sz)
       local distSq = (dx*dx) + (dz*dz)
       local radiiSq = (m.impact.craterRadius + self.impact.craterRadius) ^ 2
       if distSq < radiiSq then
         blocked = true
+        debugEcho(self.sx, self.sz, self.impact.craterRadius, "blocked by", m.sx, m.sz, m.impact.craterRadius)
         break
       end
     end
@@ -1728,10 +1729,12 @@ end
 
 function M.Meteor:Mirror(binding)
   local nsx, nsz = self.world:MirrorXZ(self.sx, self.sz)
+  local nsx = VaryWithinBounds(nsx, 10, 0, self.world.mapSizeX)
+  local nsz = VaryWithinBounds(nsz, 10, 0, self.world.mapSizeZ)
   if nsx then
     local bind
     if binding then bind = self end
-    local mm = self.world:AddMeteor(nsx, nsz, VaryWithinBounds(self.diameterImpactor, 0.1, 1, 9999), VaryWithinBounds(self.velocityImpactKm, 0.1, 1, 120), VaryWithinBounds(self.angleImpact, 0.1, 1, 89), VaryWithinBounds(self.densityImpactor, 0.1, 1000, 10000), self.age, self.metal, self.geothermal, nil, nil, bind, true)
+    local mm = self.world:AddMeteor(nsx, nsz, VaryWithinBounds(self.diameterImpactor, 3, 1, 9999), VaryWithinBounds(self.velocityImpactKm, 5, 1, 120), VaryWithinBounds(self.angleImpact, 5, 1, 89), VaryWithinBounds(self.densityImpactor, 100, 1000, 10000), self.age, self.metal, self.geothermal, nil, nil, bind, true)
     if binding then self.mirrorMeteor = mm end
   end
 end
