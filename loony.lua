@@ -1,7 +1,15 @@
-if not require then require = include end
-require "LoonyModule/class.lua"
-
-local Perlin = require "LoonyModule/perlin.lua"
+local classPath = "LoonyModule/class.lua"
+local perlinPath = "LoonyModule/perlin.lua"
+if not require then
+  require = include
+end
+if package.path then package.path = package.path .. ';LoonyModule/?.lua' end
+if love then
+  classPath = "LoonyModule.class"
+  perlinPath = "LoonyModule.perlin"
+end
+require(classPath)
+local Perlin = require(perlinPath)
 
 local M = {} -- module
 
@@ -1043,7 +1051,7 @@ function M.Renderer:AttributesFrame()
       self.data[x] = self.data[x] or {}
       self.data[x][y] = attribute
     elseif self.renderSubtype == "file" then
-      FWrite(threechars)
+      FWrite(AttributeDict[attribute].threechars)
     end
   end
   self.pixelsToRenderCount = self.pixelsToRenderCount - pixelsThisFrame - 1
