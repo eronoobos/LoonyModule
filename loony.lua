@@ -213,17 +213,17 @@ local CommandWords = {
   end,
   maretoggle = function(words, myWorld, uiCommand)
     yesMare = not yesMare
-    spEcho("yesMare is now", tostring(yesMare))
+    debugEcho("yesMare is now", tostring(yesMare))
   end,
   mirror = function(words, myWorld, uiCommand)
     myWorld.mirror = words[3]
-    spEcho("mirror: " .. myWorld.mirror)
+    debugEcho("mirror: " .. myWorld.mirror)
   end,
   mirrornext = function(words, myWorld, uiCommand)
     local mt = MirrorNames[myWorld.mirror]+1
     if mt == #MirrorTypes+1 then mt = 1 end
     myWorld.mirror = MirrorTypes[mt]
-    spEcho("mirror: " .. myWorld.mirror)
+    debugEcho("mirror: " .. myWorld.mirror)
   end,
   save = function(words, myWorld, uiCommand)
     myWorld:Save(words[3])
@@ -511,8 +511,7 @@ function M.World:Calculate()
 
   self.metalSpotDiameter = self.metalSpotRadius * 2
   self.metalSpotSeparation = self.metalSpotDiameter * 2.5
-  self.metalSpotTotalRadius = self.metalSpotRadius + self.metalSpotSeparation
-  self.metalSpotTotalArea = pi * (self.metalSpotTotalRadius ^ 2)
+  self.metalSpotTotalArea = pi * (self.metalSpotSeparation ^ 2)
   self.complexDiameter = 3200 / (self.gravity / 9.8)
   local Dc = self.complexDiameter / 1000
   self.complexDiameterCutoff = ((Dc / 1.17) * (Dc ^ 0.13)) ^ (1/1.13)
@@ -1683,17 +1682,16 @@ function M.Meteor:MetalGeothermalRamp(noMirror, overwrite)
         world.geothermalMeteorCount = world.geothermalMeteorCount + 1
       end
       self.geothermal = true
-      metalMinRadius = world.metalSpotTotalRadius
+      metalMinRadius = world.metalSpotSeparation
     end
   end
   if not blocked and impact.craterRadius > metalMinRadius then
     if world.metalSpotCount < world.metalTarget then
-      local num = mFloor( (pi*(impact.craterRadius ^ 2)) / world.metalSpotTotalArea )
+      local num = mCeil( (pi*(impact.craterRadius ^ 2)) / world.metalSpotTotalArea )
       self:SetMetalSpotCount(num, true)
     end
   end
   if world.showerRamps and impact.craterRadius > world.rampMinRadius then
-    debugEcho("RAMP")
     local angle, width = self:AddRamp()
     if mRandom() < 0.5 then self:AddRamp(AngleAdd(angle, pi)) end
   end
