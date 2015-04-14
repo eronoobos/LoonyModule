@@ -313,6 +313,12 @@ local function pairsByKeys (t, f)
   return iter
 end
 
+local function DistanceSq(x1, y1, x2, y2)
+  local dx = mAbs(x2 - x1)
+  local dy = mAbs(y2 - y1)
+  return (dx*dx) + (dy*dy)
+end
+
 local function AngleAdd(angle1, angle2)
   return (angle1 + angle2) % twicePi
 end
@@ -475,6 +481,7 @@ M.World = class(function(a, mapSize512X, mapSize512Z, metersPerElmo, gravity, de
   a.metalSpotAmount = 2.0
   a.metalSpotRadius = 50 -- elmos
   a.metalSpotDepth = 15
+  a.geothermalMinRadius = 90 -- elmos, the smallest crater radius that can contain a geo
   a.geothermalRadius = 16 -- elmos
   a.geothermalDepth = 15
   a.metalHeight = true -- draw metal depressions on the height map?
@@ -486,6 +493,7 @@ M.World = class(function(a, mapSize512X, mapSize512Z, metersPerElmo, gravity, de
   a.erosion = true -- add bowl power noise to complex craters
   a.underlyingPerlin = true
   a.underlyingPerlinHeight = 50
+  a.noMirrorRadius = 50 -- elmos, craters smaller than this are not mirrored by meteor showers
   -- local echostr = ""
   -- for k, v in pairs(a) do echostr = echostr .. tostring(k) .. "=" .. tostring(v) .. " " end
   -- debugEcho(echostr)
@@ -582,18 +590,46 @@ function M.World:MeteorShower(number, minDiameter, maxDiameter, minVelocity, max
   if underlyingMare then
     self:AddMeteor(self.mapSizeX/2, self.mapSizeZ/2, MinMaxRandom(600, 800), 50, 60, 8000, 100, 0, nil, nil, nil, nil, true)
   end
+  local diameters = {}
+  local d = maxDiameter
+  -- local div = maxDiameter ^ (1/(number-1))
+  -- local root = maxDiameter ^ (1/((number-1)*2))
+  for n = 1, number do
+    tInsert(diameters, d)
+    -- d = d / div
+    d = d ^ (1/1.15)
+  end
   local hundredConv = 100 / number
   local diameterDif = maxDiameter - minDiameter
   for n = 1, number do
-    -- local diameter = MinMaxRandom(minDiameter, maxDiameter)^100
-    local diameter = minDiameter + (mAbs(DiceRoll(65)-0.5) * diameterDif * 2)
-    -- debugEcho(diameter)
+    -- local diameter = minDiameter + (mAbs(DiceRoll(65)-0.5) * diameterDif * 2)
+    local diameter = tRemoveRandom(diameters)
     local velocity = MinMaxRandom(minVelocity, maxVelocity)
     local angle = MinMaxRandom(minAngle, maxAngle)
     local density = MinMaxRandom(minDensity, maxDensity)
     local x = mFloor(mRandom() * self.mapSizeX)
     local z = mFloor(mRandom() * self.mapSizeZ)
-    self:AddMeteor(x, z, diameter, velocity, angle, density, mFloor((number-n)*hundredConv))
+    local m = self:AddMeteor(x, z, diameter, velocity, angle, density, mFloor((number-n)*hundredConv))
+    if m.mirrorMeteor then
+      -- block mirroring meteors that overlap eachother
+      if DistanceSq(m.sx, m.sz, m.mirrorMeteor.sx, m.mirrorMeteor.sz) < (m.impact.craterRadius + m.mirrorMeteor.impact.craterRadius) ^ 2 then
+        if m.impact.craterRadius < mMin(self.mapSizeX, self.mapSizeZ) / 3 then
+          -- try again for craters less than a third of the smallest map axis
+          m:Delete()
+          tInsert(diameters, diameter)
+          number = number + 1
+        else
+          -- move big craters to the center and delete their mirror
+          m.mirrorMeteor:Delete(true)
+          x = self.mapSizeX/2 + RandomVariance(20)
+          z = self.mapSizeZ/2 + RandomVariance(20)
+          m:Move(x, z)
+        end
+      elseif m.impact.craterRadius < self.noMirrorRadius then
+        -- allow tiny craters to not be mirrored
+        m.mirrorMeteor:Delete(true)
+      end
+    end
   end
   for i = #self.meteors, 1, -1 do
     local m = self.meteors[i]
@@ -679,6 +715,18 @@ function M.World:GetFeaturelist()
     end
   end
   return objectlist
+end
+
+function M.World:GetMetalSpots()
+  local metalSpots = {}
+  for i, meteor in pairs(self.meteors) do
+    if meteor.metal > 0 then
+      for i, spot in pairs(meteor.impact.metalSpots) do
+        tInsert(metalSpots, spot)
+      end
+    end
+  end
+  return metalSpots
 end
 
 function M.World:MirrorXZ(x, z)
@@ -1653,17 +1701,18 @@ function M.Meteor:BlockedMetalGeothermal()
   for i = #meteors, 1, -1 do
     local m = meteors[i]
     if m == self then break end
-    if m.geothermal or m.metal > 0 then
-      if not m.impact then m:Collide() end
-      local dx = mAbs(m.sx - self.sx)
-      local dz = mAbs(m.sz - self.sz)
-      local distSq = (dx*dx) + (dz*dz)
-      local radiiSq = (m.impact.craterRadius + self.impact.craterRadius) ^ 2
-      if distSq < radiiSq then
-        blocked = true
-        debugEcho(self.sx, self.sz, self.impact.craterRadius, "blocked by", m.sx, m.sz, m.impact.craterRadius)
-        break
-      end
+    if not m.impact then m:Collide() end
+    local dx = mAbs(m.sx - self.sx)
+    local dz = mAbs(m.sz - self.sz)
+    local distSq = (dx*dx) + (dz*dz)
+    local radiiSq = (m.impact.craterRadius + self.impact.craterRadius) ^ 2
+    if m.impact.craterRadius < self.impact.craterRadius * 0.67 then
+      radiiSq = (m.impact.craterRadius + (self.impact.craterRadius * 0.5)) ^ 2
+    end
+    if distSq < radiiSq then
+      blocked = true
+      debugEcho(self.sx, self.sz, self.impact.craterRadius, "blocked by", m.sx, m.sz, m.impact.craterRadius)
+      break
     end
   end
   return blocked
@@ -1676,7 +1725,8 @@ function M.Meteor:MetalGeothermalRamp(noMirror, overwrite)
   local impact = self.impact
   local metalMinRadius = world.metalSpotRadius
   local blocked = self:BlockedMetalGeothermal()
-  if not blocked and impact.craterRadius > world.geothermalRadius then
+  local unequal = world.mirror ~= "none" and not self.mirrorMeteor
+  if not unequal and not blocked and impact.craterRadius > world.geothermalMinRadius then
     if world.geothermalMeteorCount < world.geothermalTarget then
       if not self.geothermal then
         world.geothermalMeteorCount = world.geothermalMeteorCount + 1
@@ -1685,9 +1735,10 @@ function M.Meteor:MetalGeothermalRamp(noMirror, overwrite)
       metalMinRadius = world.metalSpotSeparation
     end
   end
-  if not blocked and impact.craterRadius > metalMinRadius then
+  if not unequal and not blocked and impact.craterRadius > metalMinRadius then
     if world.metalSpotCount < world.metalTarget then
       local num = mCeil( (pi*(impact.craterRadius ^ 2)) / world.metalSpotTotalArea )
+      num = mMin(num, 5)
       self:SetMetalSpotCount(num, true)
     end
   end
@@ -1834,7 +1885,7 @@ function M.Impact:Model()
     local metalSpotSeparation = world.metalSpotSeparation -- metalSpotDiameter * 2.5
     if slots > 1 then dist = metalSpotSeparation / 1.9 end
     if self.peakRadius and not meteor.geothermal then
-      dist = self.peakRadius * (1+self.peakRadialNoise.intensity)
+      dist = (self.peakRadius * (1+self.peakRadialNoise.intensity)) + world.metalSpotRadius
     end
     local idealSlotsThisTier = mCeil((dist * 2 * pi * 0.9) / metalSpotSeparation)
     local slotsThisTier = mMin(idealSlotsThisTier, meteor.metal)
@@ -1849,16 +1900,24 @@ function M.Impact:Model()
         local angle = AngleAdd(((currentSlot-1) / slotsThisTier) * twicePi, angleOffset)
         x, z = CirclePos(meteor.sx, meteor.sz, dist, angle)
       end
-      local spot = { x = x, z = z, metal = world.metalSpotAmount }
-      tInsert(self.metalSpots, spot)
-      currentSlot = currentSlot + 1
-      remainingSpots = remainingSpots - 1
-      if currentSlot > slotsThisTier and i < meteor.metal then
-        dist = dist + metalSpotSeparation
-        idealSlotsThisTier = mCeil((dist * 2 * pi * 0.9) / metalSpotSeparation)
-        slotsThisTier = mMin(idealSlotsThisTier, remainingSpots)
-        angleOffset = (twicePi / slotsThisTier) / 2
-        currentSlot = 1
+      if x > world.metalSpotSeparation and x < world.mapSizeX + world.metalSpotSeparation and z > world.metalSpotSeparation and z < world.mapSizeZ + world.metalSpotSeparation then
+        local spot = { x = x, z = z, metal = world.metalSpotAmount }
+        tInsert(self.metalSpots, spot)
+        currentSlot = currentSlot + 1
+        remainingSpots = remainingSpots - 1
+        if currentSlot > slotsThisTier and i < meteor.metal then
+          dist = dist + metalSpotSeparation
+          idealSlotsThisTier = mCeil((dist * 2 * pi * 0.9) / metalSpotSeparation)
+          slotsThisTier = mMin(idealSlotsThisTier, remainingSpots)
+          angleOffset = (twicePi / slotsThisTier) / 2
+          currentSlot = 1
+        end
+      else
+        -- equalize metal map on mirrored maps when one metal spot is blocked by its distance from edge
+        if world.mirror ~= "none" and self.meteor.mirrorMeteor then
+          self.meteor.mirrorMeteor.metal = self.meteor.mirrorMeteor.metal - 1
+          self.meteor.mirrorMeteor:Collide()
+        end
       end
     end
   end
