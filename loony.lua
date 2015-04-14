@@ -8,6 +8,9 @@ if love then
   classPath = "LoonyModule.class"
   perlinPath = "LoonyModule.perlin"
 end
+if VFS then
+  require = VFS.Include
+end
 require(classPath)
 local Perlin = require(perlinPath)
 
@@ -165,18 +168,6 @@ local WorldSaveBlackList = {
   "renderers",
   "heightBuf",
   "mirrorMeteor",
-  "complexDiameter",
-  "complexDiameterCutoff",
-  "complexDepthScaleFactor",
-  "blastRayAgeDivisor",
-  "fullMapRuler",
-  "L3DTMapRuler",
-  "metalMapRuler",
-  "heightMapRuler",
-  "mapRulerNames",
-  "mapSizeX",
-  "mapSizeZ",
-  "metersPerSquare",
 }
 
 local WSBL = {}
@@ -194,7 +185,7 @@ local CommandWords = {
     myWorld:AddMeteor(words[3], words[4], radius*2)
   end,
   shower = function(words, myWorld, uiCommand)
-    myWorld:MeteorShower(words[3], words[4], words[5], words[6], words[7], words[8], words[9], words[10], words[11], yesMare)
+    myWorld:MeteorShowerAuto(words[3], words[4], words[5], words[6], words[7], words[8], words[9], words[10], words[11], yesMare)
   end,
   clear = function(words, myWorld, uiCommand)
     myWorld:Clear()
@@ -467,7 +458,7 @@ end
 
 -- classes and methods organized by class: -----------------------------------
 
-M.World = class(function(a, mapSize512X, mapSize512Z, metersPerElmo, gravity, density, mirror, metalTarget, geothermalTarget, showerRamps)
+M.World = class(function(a, mapSize512X, mapSize512Z, metersPerElmo, gravity, density, mirror, metalTarget, geothermalTarget, showerRamps, noInit)
   a.mapSize512X = mapSize512X or 8
   a.mapSize512Z = mapSize512Z or 8
   a.metersPerElmo = metersPerElmo or 1 -- meters per elmo for meteor simulation model only
@@ -478,6 +469,7 @@ M.World = class(function(a, mapSize512X, mapSize512Z, metersPerElmo, gravity, de
   a.geothermalTarget = geothermalTarget or 4
   a.showerRamps = showerRamps
   a.rampMinRadius = 100 -- elmos
+  a.metalSpotMaxPerCrater = 3
   a.metalSpotAmount = 2.0
   a.metalSpotRadius = 50 -- elmos
   a.metalSpotDepth = 15
@@ -497,8 +489,10 @@ M.World = class(function(a, mapSize512X, mapSize512Z, metersPerElmo, gravity, de
   -- local echostr = ""
   -- for k, v in pairs(a) do echostr = echostr .. tostring(k) .. "=" .. tostring(v) .. " " end
   -- debugEcho(echostr)
-  a:Calculate()
-  a:Clear()
+  if not noInit then
+    a:Calculate()
+    a:Clear()
+  end
 end)
 
 function M.World:Calculate()
@@ -575,6 +569,11 @@ function M.World:RendererFrame(frame)
   end
 end
 
+function M.World:MeteorShowerAuto(number, minDiameter, maxDiameter, minVelocity, maxVelocity, minAngle, maxAngle, minDensity, maxDensity, underlyingMare)
+  self:MeteorShower(number, minDiameter, maxDiameter, minVelocity, maxVelocity, minAngle, maxAngle, minDensity, maxDensity, underlyingMare)
+  self:SetMetalGeothermalRamp()
+end
+
 function M.World:MeteorShower(number, minDiameter, maxDiameter, minVelocity, maxVelocity, minAngle, maxAngle, minDensity, maxDensity, underlyingMare)
   number = number or 3
   minDiameter = minDiameter or 1
@@ -631,12 +630,15 @@ function M.World:MeteorShower(number, minDiameter, maxDiameter, minVelocity, max
       end
     end
   end
-  for i = #self.meteors, 1, -1 do
-    local m = self.meteors[i]
-    m:MetalGeothermalRamp()
-  end
   self:ResetMeteorAges()
   debugEcho(#self.meteors, self.metalSpotCount, self.geothermalMeteorCount)
+end
+
+function M.World:SetMetalGeothermalRamp(overwrite)
+  for i = #self.meteors, 1, -1 do
+    local m = self.meteors[i]
+    m:MetalGeothermalRamp(nil, overwrite)
+  end
 end
 
 function M.World:ResetMeteorAges()
@@ -1702,9 +1704,7 @@ function M.Meteor:BlockedMetalGeothermal()
     local m = meteors[i]
     if m == self then break end
     if not m.impact then m:Collide() end
-    local dx = mAbs(m.sx - self.sx)
-    local dz = mAbs(m.sz - self.sz)
-    local distSq = (dx*dx) + (dz*dz)
+    local distSq = DistanceSq(self.sx, self.sz, m.sx, m.sz)
     local radiiSq = (m.impact.craterRadius + self.impact.craterRadius) ^ 2
     if m.impact.craterRadius < self.impact.craterRadius * 0.67 then
       radiiSq = (m.impact.craterRadius + (self.impact.craterRadius * 0.5)) ^ 2
@@ -1713,6 +1713,19 @@ function M.Meteor:BlockedMetalGeothermal()
       blocked = true
       debugEcho(self.sx, self.sz, self.impact.craterRadius, "blocked by", m.sx, m.sz, m.impact.craterRadius)
       break
+    end
+    if self.mirrorMeteor then
+      if not self.mirrorMeteor.impact then self.mirrorMeteor:Collide() end
+      distSq = DistanceSq(self.mirrorMeteor.sx, self.mirrorMeteor.sz, m.sx, m.sz)
+      radiiSq = (m.impact.craterRadius + self.mirrorMeteor.impact.craterRadius) ^ 2
+      if m.impact.craterRadius < self.impact.craterRadius * 0.67 then
+        radiiSq = (m.impact.craterRadius + (self.mirrorMeteor.impact.craterRadius * 0.5)) ^ 2
+      end
+      if distSq < radiiSq then
+        blocked = true
+        debugEcho(self.sx, self.sz, self.impact.craterRadius, "blocked by", m.sx, m.sz, m.impact.craterRadius)
+        break
+      end
     end
   end
   return blocked
@@ -1738,7 +1751,7 @@ function M.Meteor:MetalGeothermalRamp(noMirror, overwrite)
   if not unequal and not blocked and impact.craterRadius > metalMinRadius then
     if world.metalSpotCount < world.metalTarget then
       local num = mCeil( (pi*(impact.craterRadius ^ 2)) / world.metalSpotTotalArea )
-      num = mMin(num, 5)
+      num = mMin(num, world.metalSpotMaxPerCrater)
       self:SetMetalSpotCount(num, true)
     end
   end
@@ -1900,7 +1913,7 @@ function M.Impact:Model()
         local angle = AngleAdd(((currentSlot-1) / slotsThisTier) * twicePi, angleOffset)
         x, z = CirclePos(meteor.sx, meteor.sz, dist, angle)
       end
-      if x > world.metalSpotSeparation and x < world.mapSizeX + world.metalSpotSeparation and z > world.metalSpotSeparation and z < world.mapSizeZ + world.metalSpotSeparation then
+      if x > world.metalSpotSeparation and x < world.mapSizeX - world.metalSpotSeparation and z > world.metalSpotSeparation and z < world.mapSizeZ - world.metalSpotSeparation then
         local spot = { x = x, z = z, metal = world.metalSpotAmount }
         tInsert(self.metalSpots, spot)
         currentSlot = currentSlot + 1
@@ -2128,11 +2141,6 @@ function M.GetAttributeRatioRGB(attribute)
   return rgb[1], rgb[2], rgb[3]
 end
 
-function M.AddToWorldSaveBlacklist(key)
-  tInsert(WorldSaveBlackList, key)
-  WSBL[key] = 1
-end
-
 -- module callins
 
 function M.UpdateMeteor(meteor) end
@@ -2144,6 +2152,36 @@ function M.FrameRenderer(renderer) end
 function M.CompleteRenderer(renderer) end
 
 function M.EndUiCommand(uiCommand) end
+
+-- populate WorldSaveBlacklist
+
+function M.AddToWorldSaveBlacklist(key)
+  tInsert(WorldSaveBlackList, key)
+  WSBL[key] = 1
+  debugEcho(key, "added to WorldSaveBlacklist")
+end
+
+local wNoCalc = M.World(nil, nil, nil, nil, nil, nil, nil, nil, true, true)
+wNoCalc.rimTerracing = true
+local wCalc = M.World()
+for k, v in pairs(wCalc) do
+  if not wNoCalc[k] then
+    M.AddToWorldSaveBlacklist(k)
+  end
+end
+local mNoCalc = M.Meteor(wCalc, 1, 1)
+mNoCalc.geothermal = true
+local mNoCalc2 = {}
+for k, v in pairs(mNoCalc) do
+  mNoCalc2[k] = 1
+end
+local mCalc = M.Meteor(wCalc, 1, 1)
+mCalc:Collide()
+for k, v in pairs(mCalc) do
+  if not mNoCalc2[k] then
+    M.AddToWorldSaveBlacklist(k)
+  end
+end
 
 -- export module
 
