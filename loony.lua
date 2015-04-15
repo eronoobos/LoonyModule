@@ -472,10 +472,10 @@ M.World = class(function(a, mapSize512X, mapSize512Z, metersPerElmo, gravity, de
   a.metalSpotMaxPerCrater = 3
   a.metalSpotAmount = 2.0
   a.metalSpotRadius = 50 -- elmos
-  a.metalSpotDepth = 15
-  a.geothermalMinRadius = 90 -- elmos, the smallest crater radius that can contain a geo
+  a.metalSpotDepth = 10
+  a.geothermalMinRadius = 200 -- elmos, the smallest crater radius that can contain a geo
   a.geothermalRadius = 16 -- elmos
-  a.geothermalDepth = 15
+  a.geothermalDepth = 10
   a.metalHeight = true -- draw metal depressions on the height map?
   a.geothermalHeight = true -- draw geothermal depressions on the height map?
   a.metalAttribute = true -- draw metal spots on the attribute map?
@@ -1088,7 +1088,6 @@ function M.Renderer:AttributesFrame()
   for p = pMin, pMax do
     local x = (p % self.mapRuler.width) + 1
     local y = mFloor(p / self.mapRuler.width) + 1
-    if p < 2000 then debugEcho(p, x, y) end
     local attribute = 0
     for i, c in ipairs(self.craters) do
       local a = c:AttributePixel(x, y)
@@ -1269,7 +1268,7 @@ end)
 function M.Crater:AddAgeNoise()
   if self.ageNoise then return end
   if self.impact.meteor.age > 0 and self.totalradiusPlusWobble < 1000 then -- otherwise, way too much memory
-    self.ageNoise = M.NoisePatch(self.x, self.y, self.totalradiusPlusWobble, self:PopSeed(), 0.5, 0.33, 10-self.renderer.mapRuler.elmosPerPixelPowersOfTwo)
+    self.ageNoise = M.NoisePatch(self.x, self.y, self.totalradiusPlusWobble, self:PopSeed(), 1, 0.33, 10-self.renderer.mapRuler.elmosPerPixelPowersOfTwo)
   end
 end
 
@@ -1543,12 +1542,11 @@ end
 
 -- M.Meteor stores data, does not do any calcuations
 M.Meteor = class(function(a, world, sx, sz, diameterImpactor, velocityImpactKm, angleImpact, densityImpactor, age, metal, geothermal, seedSeed, ramps, mirrorMeteor)
-  debugEcho(sx, sz, diameterImpactor, age, mirrorMeteor)
+  -- debugEcho(sx, sz, diameterImpactor, age, mirrorMeteor)
   -- coordinates sx and sz are in spring coordinates (elmos)
   a.world = world
   a.sx, a.sz = mFloor(sx), mFloor(sz)
   a.diameterImpactor = diameterImpactor or 10
-  -- debugEcho(mFloor(a.diameterImpactor) .. " meter object")
   a.velocityImpactKm = velocityImpactKm or 30
   a.angleImpact = angleImpact or 45
   a.densityImpactor = densityImpactor or 8000
@@ -1711,7 +1709,7 @@ function M.Meteor:BlockedMetalGeothermal()
     end
     if distSq < radiiSq then
       blocked = true
-      debugEcho(self.sx, self.sz, self.impact.craterRadius, "blocked by", m.sx, m.sz, m.impact.craterRadius)
+      -- debugEcho(self.sx, self.sz, self.impact.craterRadius, "blocked by", m.sx, m.sz, m.impact.craterRadius)
       break
     end
     if self.mirrorMeteor then
@@ -1723,7 +1721,7 @@ function M.Meteor:BlockedMetalGeothermal()
       end
       if distSq < radiiSq then
         blocked = true
-        debugEcho(self.sx, self.sz, self.impact.craterRadius, "blocked by", m.sx, m.sz, m.impact.craterRadius)
+        -- debugEcho(self.sx, self.sz, self.impact.craterRadius, "blocked by", m.sx, m.sz, m.impact.craterRadius)
         break
       end
     end
@@ -1740,13 +1738,15 @@ function M.Meteor:MetalGeothermalRamp(noMirror, overwrite)
   local blocked = self:BlockedMetalGeothermal()
   local unequal = world.mirror ~= "none" and not self.mirrorMeteor
   if not unequal and not blocked and impact.craterRadius > world.geothermalMinRadius then
-    if world.geothermalMeteorCount < world.geothermalTarget then
-      if not self.geothermal then
-        world.geothermalMeteorCount = world.geothermalMeteorCount + 1
+      if world.geothermalMeteorCount < world.geothermalTarget then
+        if self.sx > world.geothermalMinRadius and self.sx < world.mapSizeX - world.geothermalMinRadius and self.sz > world.geothermalMinRadius and self.sz < world.mapSizeZ - world.geothermalMinRadius then
+          if not self.geothermal then
+            world.geothermalMeteorCount = world.geothermalMeteorCount + 1
+          end
+          self.geothermal = true
+          metalMinRadius = world.metalSpotSeparation
+        end
       end
-      self.geothermal = true
-      metalMinRadius = world.metalSpotSeparation
-    end
   end
   if not unequal and not blocked and impact.craterRadius > metalMinRadius then
     if world.metalSpotCount < world.metalTarget then
@@ -2158,7 +2158,7 @@ function M.EndUiCommand(uiCommand) end
 function M.AddToWorldSaveBlacklist(key)
   tInsert(WorldSaveBlackList, key)
   WSBL[key] = 1
-  debugEcho(key, "added to WorldSaveBlacklist")
+  -- debugEcho(key, "added to WorldSaveBlacklist")
 end
 
 local wNoCalc = M.World(nil, nil, nil, nil, nil, nil, nil, nil, true, true)
