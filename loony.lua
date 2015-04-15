@@ -657,6 +657,8 @@ function M.World:AddMeteor(sx, sz, diameterImpactor, velocityImpactKm, angleImpa
     m:Mirror(true)
   end
   m:Collide()
+  if m.geothermal then self.geothermalMeteorCount = self.geothermalMeteorCount + 1 end
+  self.metalSpotCount = self.metalSpotCount + m.metal
   return m
 end
 
