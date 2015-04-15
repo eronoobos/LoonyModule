@@ -468,7 +468,7 @@ M.World = class(function(a, mapSize512X, mapSize512Z, metersPerElmo, gravity, de
   a.metalTarget = metalTarget or 20
   a.geothermalTarget = geothermalTarget or 4
   a.showerRamps = showerRamps
-  a.rampMinRadius = 100 -- elmos
+  a.rampMinRadius = 300 -- elmos
   a.metalSpotMaxPerCrater = 3
   a.metalSpotAmount = 2.0
   a.metalSpotRadius = 50 -- elmos
@@ -1756,8 +1756,7 @@ function M.Meteor:MetalGeothermalRamp(noMirror, overwrite)
     end
   end
   if world.showerRamps and impact.craterRadius > world.rampMinRadius then
-    local angle, width = self:AddRamp()
-    if mRandom() < 0.5 then self:AddRamp(AngleAdd(angle, pi)) end
+    self:Add180Ramps()
   end
   self.metalGeothermalRampSet = true
   if not noMirror and self.mirrorMeteor and type(self.mirrorMeteor) ~= boolean then
@@ -1772,6 +1771,11 @@ function M.Meteor:MetalGeothermalRamp(noMirror, overwrite)
     self.mirrorMeteor.metalGeothermalRampSet = true
     -- self.mirrorMeteor:MetalGeothermalRamp(true)
   end
+end
+
+function M.Meteor:Add180Ramps()
+  local angle, width = self:AddRamp()
+  local angle2, width2 = self:AddRamp(AngleAdd(angle, pi))
 end
 
 function M.Meteor:AddRamp(angle, width)
