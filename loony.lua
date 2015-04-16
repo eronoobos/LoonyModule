@@ -631,7 +631,7 @@ function M.World:MeteorShower(number, minDiameter, maxDiameter, minVelocity, max
     end
   end
   self:ResetMeteorAges()
-  debugEcho(#self.meteors, self.metalSpotCount, self.geothermalMeteorCount)
+  debugEcho("shower done", #self.meteors .. " meteors", self.metalSpotCount .. " metal spots", self.geothermalMeteorCount .. " geothermals")
 end
 
 function M.World:SetMetalGeothermalRamp(overwrite)
