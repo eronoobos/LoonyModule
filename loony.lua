@@ -1855,7 +1855,7 @@ function M.Meteor:CopyMetalGeothermalRamp(targetMeteor, mirrorX, mirrorZ)
   targetMeteor.geothermal = self.geothermal
   targetMeteor:SetMetalSpotCount(self.metal, true)
   for r, ramp in pairs(self.ramps) do
-    mm:AddRamp(AngleMirror(ramp.angle, mirrorX, mirrorZ), ramp.width)
+    targetMeteor:AddRamp(AngleMirror(ramp.angle, mirrorX, mirrorZ), ramp.width)
   end
   targetMeteor.metalGeothermalRampSet = true
 end
