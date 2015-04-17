@@ -327,6 +327,13 @@ local function CirclePos(cx, cy, dist, angle)
   return x, y
 end
 
+local function AngleMirror(angle, mirrorX, mirrorY)
+  local dx, dy = CirclePos(0, 0, twoSqrtTwo, angle)
+  if mirrorX then dx = -dx end
+  if mirrorY then dy = -dy end
+  return mAtan2(dy, dx)
+end
+
 local function AngleDist(angle1, angle2)
   return mAbs((angle1 + pi -  angle2) % twicePi - pi)
 end
@@ -660,6 +667,81 @@ function M.World:AddMeteor(sx, sz, diameterImpactor, velocityImpactKm, angleImpa
   if m.geothermal then self.geothermalMeteorCount = self.geothermalMeteorCount + 1 end
   self.metalSpotCount = self.metalSpotCount + m.metal
   return m
+end
+
+function M.World:AddStartMeteor(sx, sz, diameterImpactor)
+  local m = self:AddMeteor(sx, sz, diameterImpactor, nil, nil, nil, nil, 3, false)
+  if self.showerRamps then m:Add180Ramps() end
+  m.metalGeothermalRampSet = true
+  m.start = true
+end
+
+function M.World:MirrorAll(mirrorX, mirrorZ)
+  self.mirror = "none"
+  local meteorsCopy = tDuplicate(self.meteors) -- so that we don't infinite mirror
+  self.meteors = {}
+  local mirrorIndex = 0
+  if mirrorX then mirrorIndex = mirrorIndex + 1 end
+  if mirrorZ then mirrorIndex = mirrorIndex + 2 end
+  local bigCraterRadius = mMin(self.mapSizeX, self.mapSizeZ) / 3
+  for i, m in pairs(meteorsCopy) do
+    if m.impact.craterRadius >= self.noMirrorRadius then
+      local x, z = m.sx, m.sz
+      if mirrorX then x = self.mapSizeX - x end
+      if mirrorZ then z = self.mapSizeZ - z end
+      local mm = m:Mirror(false, x, z)
+      -- block mirroring meteors that overlap eachother
+      if DistanceSq(m.sx, m.sz, mm.sx, mm.sz) < (m.impact.craterRadius + mm.impact.craterRadius) ^ 2 then
+        if m.impact.craterRadius < bigCraterRadius then
+          -- remove craters less than a third of the smallest map axis
+          mm:Delete()
+          mm = nil
+        else
+          -- move big craters to the center and delete their mirror
+          mm:Delete(true)
+          mm = nil
+          x = self.mapSizeX/2 + RandomVariance(20)
+          z = self.mapSizeZ/2 + RandomVariance(20)
+          m:Move(x, z)
+        end
+      end
+      if mm then
+        m.mirrorAlled = m.mirrorAlled or {}
+        m.mirrorAlled[mirrorIndex] = m.mirrorAlled[mirrorIndex] or {}
+        tInsert(m.mirrorAlled[mirrorIndex], mm)
+      end
+    end
+  end
+  local meteorsMirrored = tDuplicate(self.meteors)
+  self.meteors = {}
+  local switch = true
+  local m = true
+  while m do
+    if switch then
+      m = tRemove(meteorsCopy, 1) or tRemove(meteorsCopy, 1)
+    else
+      m = tRemove(meteorsMirrored, 1) or tRemove(meteorsCopy, 1)
+    end
+    if m then tInsert(self.meteors, m) end
+    switch = not switch
+  end
+end
+
+function M.World:SetMetalGeothermalRampPostMirrorAll()
+  for i = #self.meteors, 1, -1 do
+    local m = self.meteors[i]
+    if m.mirrorAlled then
+      m:MetalGeothermalRamp()
+      for mirrorIndex, mms in pairs(m.mirrorAlled) do
+        local mirrorX, mirrorZ
+        if mirrorIndex >= 2 then mirrorZ = true end
+        if mirrorIndex == 1 or mirrorIndex == 3 then mirrorX = true end
+        for ii, mm in pairs(mms) do
+          m:CopyMetalGeothermalRamp(mm, mirrorX, mirrorZ)
+        end
+      end
+    end
+  end
 end
 
 function M.World:RenderAttributes(mapRuler, renderSubtype, uiCommand)
@@ -1762,17 +1844,20 @@ function M.Meteor:MetalGeothermalRamp(noMirror, overwrite)
   end
   self.metalGeothermalRampSet = true
   if not noMirror and self.mirrorMeteor and type(self.mirrorMeteor) ~= boolean then
-    if not self.mirrorMeteor.geothermal and self.geothermal then
-      world.geothermalMeteorCount = world.geothermalMeteorCount + 1
-    end
-    self.mirrorMeteor.geothermal = self.geothermal
-    self.mirrorMeteor:SetMetalSpotCount(self.metal, true)
-    for r, ramp in pairs(self.ramps) do
-      self.mirrorMeteor:AddRamp(ramp.angle, ramp.width)
-    end
-    self.mirrorMeteor.metalGeothermalRampSet = true
-    -- self.mirrorMeteor:MetalGeothermalRamp(true)
+    self:CopyMetalGeothermalRamp(self.mirrorMeteor)
   end
+end
+
+function M.Meteor:CopyMetalGeothermalRamp(targetMeteor, mirrorX, mirrorZ)
+  if not targetMeteor.geothermal and self.geothermal then
+    self.world.geothermalMeteorCount = self.world.geothermalMeteorCount + 1
+  end
+  targetMeteor.geothermal = self.geothermal
+  targetMeteor:SetMetalSpotCount(self.metal, true)
+  for r, ramp in pairs(self.ramps) do
+    mm:AddRamp(AngleMirror(ramp.angle, mirrorX, mirrorZ), ramp.width)
+  end
+  targetMeteor.metalGeothermalRampSet = true
 end
 
 function M.Meteor:Add180Ramps()
@@ -1795,15 +1880,22 @@ function M.Meteor:ClearRamps()
   self:Collide()
 end
 
-function M.Meteor:Mirror(binding)
-  local nsx, nsz = self.world:MirrorXZ(self.sx, self.sz)
-  local nsx = VaryWithinBounds(nsx, 10, 0, self.world.mapSizeX)
-  local nsz = VaryWithinBounds(nsz, 10, 0, self.world.mapSizeZ)
+function M.Meteor:Mirror(binding, x, z)
+  if not x then x, z = self.world:MirrorXZ(self.sx, self.sz) end
+  local nsx = VaryWithinBounds(x, 10, 0, self.world.mapSizeX)
+  local nsz = VaryWithinBounds(z, 10, 0, self.world.mapSizeZ)
   if nsx then
     local bind
     if binding then bind = self end
     local mm = self.world:AddMeteor(nsx, nsz, VaryWithinBounds(self.diameterImpactor, 3, 1, 9999), VaryWithinBounds(self.velocityImpactKm, 5, 1, 120), VaryWithinBounds(self.angleImpact, 5, 1, 89), VaryWithinBounds(self.densityImpactor, 100, 1000, 10000), self.age, self.metal, self.geothermal, nil, nil, bind, true)
+    mm.metalGeothermalRampSet = self.metalGeothermalRampSet
+    mm.start = self.start
+    if self.start then
+      if self.world.showerRamps then mm:Add180Ramps() end
+      self:Collide()
+    end
     if binding then self.mirrorMeteor = mm end
+    return mm
   end
 end
 
@@ -1850,6 +1942,7 @@ function M.Impact:Model()
   self.rayWobbleAmount = MinMaxRandom(0.3, 0.4)
 
   self.complex = self.diameterTransient > world.complexDiameterCutoff
+  if meteor.start then self.complex = false end
   if self.complex then
     self.bowlPower = 3
     local Dtc = self.diameterTransient / 1000
@@ -1890,6 +1983,11 @@ function M.Impact:Model()
     self.distWobbleAmount = MinMaxRandom(0.05, 0.15)
     self.distNoise = M.WrapNoise(mMax(mCeil(self.craterRadius / 35), 8), self.distWobbleAmount, self:PopSeed(), 0.35, 5)
     self.rayNoise = M.WrapNoise(24, self.rayWobbleAmount, self:PopSeed(), 0.5, 3)
+  end
+
+  if meteor.start then
+    self.bowlPower = 2
+    self.craterDepth = self.craterDepth * 0.5
   end
 
   self.metalSpots = {}
