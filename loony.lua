@@ -480,6 +480,7 @@ M.World = class(function(a, mapSize512X, mapSize512Z, metersPerElmo, gravity, de
   a.metalSpotAmount = 2.0
   a.metalSpotRadius = 50 -- elmos
   a.metalSpotDepth = 10
+  a.metalSpotMinRadius = 100 -- elmos
   a.geothermalMinRadius = 200 -- elmos, the smallest crater radius that can contain a geo
   a.geothermalRadius = 16 -- elmos
   a.geothermalDepth = 10
@@ -488,7 +489,9 @@ M.World = class(function(a, mapSize512X, mapSize512Z, metersPerElmo, gravity, de
   a.metalAttribute = true -- draw metal spots on the attribute map?
   a.geothermalAttribute = true -- draw geothermal vents on the attribute map?
   a.rimTerracing = false
+  a.rayCraterNumber = 4
   a.blastRayCraterNumber = 3
+  a.generateBlastNoise = true -- generate the noise used for attribute map blast rays
   a.erosion = true -- add bowl power noise to complex craters
   a.underlyingPerlin = true
   a.underlyingPerlinHeight = 50
@@ -526,6 +529,7 @@ function M.World:Calculate()
   self.complexDiameterCutoff = ((Dc / 1.17) * (Dc ^ 0.13)) ^ (1/1.13)
   self.complexDiameterCutoff = self.complexDiameterCutoff * 1000
   self.complexDepthScaleFactor = ((self.gravity / 1.6) + 1) / 2
+  self.rayAge = mCeil( (100 / 10) * self.rayCraterNumber )
   self.blastRayAge = mCeil( (100 / 10) * self.blastRayCraterNumber )
   self.blastRayAgeDivisor = 100 / self.blastRayAge
   self:ResetMeteorAges()
@@ -650,6 +654,7 @@ end
 
 function M.World:ResetMeteorAges()
   if not self.meteors then return end
+  self.rayAge = mCeil( (100 / #self.meteors) * self.rayCraterNumber )
   self.blastRayAge = mCeil( (100 / #self.meteors) * self.blastRayCraterNumber )
   self.blastRayAgeDivisor = 100 / self.blastRayAge
   for i, m in pairs(self.meteors) do
@@ -1272,6 +1277,7 @@ M.Crater = class(function(a, impact, renderer)
   a.impact = impact
   a.renderer = renderer
   local meteor = impact.meteor
+  a.impact:GenerateNoise()
 
   a.seedPacket = CreateSeedPacket(impact.craterSeedSeed, 100)
 
@@ -1282,7 +1288,7 @@ M.Crater = class(function(a, impact, renderer)
   a.peakC = (a.radius / 8) ^ 2
   a.totalradius = a.radius + a.falloff
   a.totalradiusSq = a.totalradius * a.totalradius
-  a.totalradiusPlusWobble = a.totalradius*(1+impact.distWobbleAmount)
+  a.totalradiusPlusWobble = a.totalradius*(1+impact.distNoise.intensity)
   a.totalradiusPlusWobbleSq = a.totalradiusPlusWobble ^ 2
   a.xmin, a.xmax, a.ymin, a.ymax = renderer.mapRuler:RadiusBounds(a.x, a.y, a.totalradiusPlusWobble)
   a.radiusSq = a.radius * a.radius
@@ -1327,7 +1333,8 @@ M.Crater = class(function(a, impact, renderer)
     a.peakRadius = impact.peakRadius / elmosPerPixel
     a.peakRadiusSq = a.peakRadius ^ 2
     local baseN = 8 + mFloor(impact.peakRadius / 300)
-    a.peakNoise = M.NoisePatch(a.x, a.y, a.peakRadius, a:PopSeed(), impact.craterPeakHeight, 0.3, baseN-elmosPerPixelP2, 1, 0.5, 1, a:PopSeed(), 16, 0.75)
+    -- x, y, radius, seed, intensity, persistence, N, amplitude, blackValue, whiteValue, wrapSeed, wrapLength, wrapIntensity, wrapPersistence, wrapN, wrapAmplitude)
+    a.peakNoise = M.NoisePatch(a.x, a.y, a.peakRadius, a:PopSeed(), impact.craterPeakHeight, 0.3, baseN-elmosPerPixelP2, 1, 0.5, 1) --, a:PopSeed(), 16, 0.75)
   end
 
   if impact.terraceSeeds then
@@ -1360,8 +1367,9 @@ function M.Crater:PopSeed()
   return tRemove(self.seedPacket)
 end
 
-function M.Crater:DistanceSq(x, y)
-  local dx, dy = mAbs(x-self.x), mAbs(y-self.y)
+function M.Crater:DistanceSq(x, y, dx, dy)
+  dx = dx or mAbs(x-self.x)
+  dy = dy or mAbs(y-self.y)
   if doNotStore then return ((dx*dx) + (dy*dy)) end
   diffDistancesSq[dx] = diffDistancesSq[dx] or {}
   diffDistancesSq[dx][dy] = diffDistancesSq[dx][dy] or ((dx*dx) + (dy*dy))
@@ -1415,7 +1423,7 @@ function M.Crater:HeightPixel(x, y)
   local dx, dy = x-self.x, y-self.y
   local angle = AngleDXDY(dx, dy)
   local distWobbly = impact.distNoise:Radial(angle) + 1
-  local realDistSq = self:DistanceSq(x, y)
+  local realDistSq = self:DistanceSq(nil, nil, mAbs(dx), mAbs(dy))
   if realDistSq > self.totalradiusPlusWobbleSq then return 0, 0, false end
   local distSq = mMix(realDistSq, realDistSq * distWobbly, mMin(1, (realDistSq/self.radiusSq))^2)
   -- local distSq = realDistSq * distWobbly
@@ -1458,11 +1466,11 @@ function M.Crater:HeightPixel(x, y)
         height = height + peak
       end
       if height < impact.meltSurface then height = impact.meltSurface end
-    elseif meteor.age < 15 then
+    elseif meteor.age < world.rayAge then
       local rayWobbly = impact.rayNoise:Radial(angle) + 1
       local rayWidth = impact.rayWidth * rayWobbly
       local rayWidthMult = twicePi / rayWidth
-      local rayHeight = mMax(mSin(rayWidthMult * angle) - 0.75, 0) * impact.rayHeight * heightWobbly * rimRatio * (1-(meteor.age / 15))
+      local rayHeight = mMax(mSin(rayWidthMult*angle) - 0.75, 0) * impact.rayHeight * heightWobbly * rimRatio * impact.rayAgeRatio
       height = height - rayHeight
     end
   else
@@ -1788,10 +1796,7 @@ function M.Meteor:BlockedMetalGeothermal()
     if not m.impact then m:Collide() end
     local distSq = DistanceSq(self.sx, self.sz, m.sx, m.sz)
     local radiiSq = (m.impact.craterRadius + self.impact.craterRadius) ^ 2
-    if m.impact.craterRadius < self.impact.craterRadius * 0.67 then
-      radiiSq = (m.impact.craterRadius + (self.impact.craterRadius * 0.5)) ^ 2
-    end
-    if distSq < radiiSq then
+    if m.impact.craterRadius >= self.world.noMirrorRadius and distSq < radiiSq then
       blocked = true
       -- debugEcho(self.sx, self.sz, self.impact.craterRadius, "blocked by", m.sx, m.sz, m.impact.craterRadius)
       break
@@ -1818,7 +1823,7 @@ function M.Meteor:MetalGeothermalRamp(noMirror, overwrite)
   if not self.impact then self:Collide() end
   local world = self.world
   local impact = self.impact
-  local metalMinRadius = world.metalSpotRadius
+  local metalMinRadius = world.metalSpotMinRadius
   local blocked = self:BlockedMetalGeothermal()
   local unequal = world.mirror ~= "none" and not self.mirrorMeteor
   if not unequal and not blocked and impact.craterRadius > world.geothermalMinRadius then
@@ -1919,9 +1924,9 @@ function M.Impact:Model()
   local meteor = self.meteor
 
   self.craterSeedSeed = self:PopSeed()
-  mRandomSeed(self:PopSeed())
+  self.noiseSeed = self:PopSeed()
 
-  self.ageRatio = self.meteor.age / 100
+  self.ageRatio = meteor.age / 100
 
   self.velocityImpact = meteor.velocityImpactKm * 1000
   self.angleImpactRadians = meteor.angleImpact * radiansPerDegree
@@ -1938,9 +1943,6 @@ function M.Impact:Model()
 
   self.craterRimHeight = self.rimHeightSimple / world.metersPerElmo
 
-  self.heightWobbleAmount = MinMaxRandom(0.15, 0.35)
-  self.rayWobbleAmount = MinMaxRandom(0.3, 0.4)
-
   self.complex = self.diameterTransient > world.complexDiameterCutoff
   if meteor.start then self.complex = false end
   if self.complex then
@@ -1956,8 +1958,6 @@ function M.Impact:Model()
       self.craterDepth = self.craterDepth * 0.6
       -- local terraceNum = mMin(4, mCeil(self.diameterTransient / world.complexDiameterCutoff))
       local terraceNum = 2 -- i can't figure out how to make more than two work
-      self.terraceSeeds = {}
-      for i = 1, terraceNum do self.terraceSeeds[i] = self:PopSeed() end
     end
     self.mass = (pi * (meteor.diameterImpactor ^ 3) / 6) * meteor.densityImpactor
     self.energyImpact = 0.5 * self.mass * (self.velocityImpact^2)
@@ -1968,11 +1968,8 @@ function M.Impact:Model()
     self.meltSurface = self.craterRimHeight + self.craterMeltThickness - self.craterDepth
     -- debugEcho(self.energyImpact, self.meltVolume, self.meltThickness)
     self.craterPeakHeight = self.craterDepth * 0.5
-    self.peakRadialNoise = M.WrapNoise(16, 0.75, self:PopSeed())
-    self.distWobbleAmount = MinMaxRandom(0.075, 0.15)
-    self.distNoise = M.WrapNoise(mMax(mCeil(self.craterRadius / 20), 8), self.distWobbleAmount, self:PopSeed(), 0.5, 3)
     -- debugEcho( mFloor(self.diameterImpactor), mFloor(self.diameterComplex), mFloor(self.depthComplex), self.diameterComplex/self.depthComplex, mFloor(self.diameterTransient), mFloor(self.depthTransient) )
-    self.peakRadius = self.craterRadius / 5.5
+    self.peakRadius = self.craterRadius / 4
   else
     self.bowlPower = 1
     self.craterDepth = ((self.depthSimple + self.rimHeightSimple)  ) / world.metersPerElmo
@@ -1980,9 +1977,9 @@ function M.Impact:Model()
     self.craterRadius = (self.diameterSimple / 2) / world.metersPerElmo
     self.craterFalloff = self.craterRadius * 0.66
     self.rayHeight = (self.craterRimHeight / 2)
-    self.distWobbleAmount = MinMaxRandom(0.05, 0.15)
-    self.distNoise = M.WrapNoise(mMax(mCeil(self.craterRadius / 35), 8), self.distWobbleAmount, self:PopSeed(), 0.35, 5)
-    self.rayNoise = M.WrapNoise(24, self.rayWobbleAmount, self:PopSeed(), 0.5, 3)
+    if meteor.age < world.rayAge then
+      self.rayAgeRatio = 1 - (meteor.age / world.rayAge)
+    end
   end
 
   if meteor.start then
@@ -2002,7 +1999,7 @@ function M.Impact:Model()
     local metalSpotSeparation = world.metalSpotSeparation -- metalSpotDiameter * 2.5
     if slots > 1 then dist = metalSpotSeparation / 1.9 end
     if self.peakRadius and not meteor.geothermal then
-      dist = (self.peakRadius * (1+self.peakRadialNoise.intensity)) + world.metalSpotRadius
+      dist = self.peakRadius + world.metalSpotRadius
     end
     local idealSlotsThisTier = mCeil((dist * 2 * pi * 0.9) / metalSpotSeparation)
     local slotsThisTier = mMin(idealSlotsThisTier, meteor.metal)
@@ -2039,15 +2036,36 @@ function M.Impact:Model()
     end
   end
 
-  if self.complex and world.erosion then
-    self.curveNoise = M.WrapNoise(mMax(mCeil(self.craterRadius / 25), 8), self.ageRatio * 0.5, self:PopSeed(), 0.3, 5)
-  end
+  self.noiseGenerated = false
+end
 
-  self.heightNoise = M.WrapNoise(mMax(mCeil(self.craterRadius / 45), 8), self.heightWobbleAmount, self:PopSeed())
-  if meteor.age < world.blastRayAge then
-    self.blastNoise = M.WrapNoise(mMin(mMax(mCeil(self.craterRadius), 32), 512), 0.5, self:PopSeed(), 1, 1)
-    -- debugEcho(self.blastNoise.length)
+-- as long as the seeds are consistent, this is only needed right before a crater
+function M.Impact:GenerateNoise()
+  if self.noiseGenerated then return end
+  local world = self.world
+  local meteor = self.meteor
+  mRandomSeed(self.noiseSeed)
+  if self.complex then
+    if world.rimTerracing then
+      local terraceNum = 2 -- i can't figure out how to make more than two work
+      self.terraceSeeds = {}
+      for i = 1, terraceNum do self.terraceSeeds[i] = NewSeed() end
+    end
+    self.distNoise = M.WrapNoise(mMax(mCeil(self.craterRadius / 20), 8), MinMaxRandom(0.075, 0.15), NewSeed(), 0.5, 3)
+  else
+    self.distNoise = M.WrapNoise(mMax(mCeil(self.craterRadius / 35), 8), MinMaxRandom(0.05, 0.15), NewSeed(), 0.35, 5)
+    if meteor.age < world.rayAge then
+      self.rayNoise = M.WrapNoise(24, MinMaxRandom(0.3, 0.4), NewSeed(), 0.5, 3)
+    end
   end
+  if self.complex and world.erosion then
+    self.curveNoise = M.WrapNoise(mMax(mCeil(self.craterRadius / 25), 8), self.ageRatio * 0.5, NewSeed(), 0.3, 5)
+  end
+  self.heightNoise = M.WrapNoise(mMax(mCeil(self.craterRadius / 45), 8), MinMaxRandom(0.15, 0.35), NewSeed())
+  if world.generateBlastNoise and meteor.age < world.blastRayAge then
+    self.blastNoise = M.WrapNoise(mMin(mMax(mCeil(self.craterRadius), 32), 512), 0.5, NewSeed(), 1, 1)
+  end
+  self.noiseGenerated = true
 end
 
 ----------------------------------------------------------
