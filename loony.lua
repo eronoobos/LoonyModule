@@ -217,7 +217,7 @@ local CommandWords = {
     debugEcho("mirror: " .. myWorld.mirror)
   end,
   mirrorall = function(words, myWorld, uiCommand)
-    myWorld:MirrorAll(words[3] == "1", words[4] == "1")
+    myWorld:MirrorAll(words[3], words[4], words[5], words[6], words[7], words[8])
   end,
   save = function(words, myWorld, uiCommand)
     myWorld:Save(words[3])
@@ -320,17 +320,23 @@ end
 local function AngleXYXY(x1, y1, x2, y2)
   local dx = x2 - x1
   local dy = y2 - y1
-  return mAtan2(dy, dx)
+  return mAtan2(dy, dx), dx, dy
 end
 
 local function CirclePos(cx, cy, dist, angle)
   angle = angle or mRandom() * twicePi
   local x = cx + dist * mCos(angle)
   local y = cy + dist * mSin(angle)
-  return x, y
+  return mFloor(x), mFloor(y)
 end
 
-local function AngleMirror(angle, mirrorX, mirrorY)
+local function AngleMirror(angle, mirrorIndex)
+  if mirrorIndex < 0 then
+    return AngleAdd(angle, -mirrorIndex*radiansPerDegree)
+  end
+  local mirrorX, mirrorY
+  if mirrorIndex == 1 or mirrorIndex == 3 then mirrorX = true end
+  if mirrorIndex == 2 or mirrorIndex == 3 then mirrorZ = true end
   local dx, dy = CirclePos(0, 0, twoSqrtTwo, angle)
   if mirrorX then dx = -dx end
   if mirrorY then dy = -dy end
@@ -511,6 +517,10 @@ end)
 function M.World:Calculate()
   self.mapSizeX = self.mapSize512X * 512
   self.mapSizeZ = self.mapSize512Z * 512
+  self.centerX = self.mapSizeX / 2
+  self.centerZ = self.mapSizeZ / 2
+  self.smallestDimension = mMin(self.mapSizeX, self.mapSizeZ)
+  self.halfSmallestDimension = self.smallestDimension / 2
   self.heightMapRuler = M.MapRuler(self, nil, (self.mapSizeX / Game.squareSize) + 1, (self.mapSizeZ / Game.squareSize) + 1)
   self.metalMapRuler = M.MapRuler(self, 16, (self.mapSizeX / 16), (self.mapSizeZ / 16))
   self.L3DTMapRuler = M.MapRuler(self, 4, (self.mapSizeX / 4), (self.mapSizeZ / 4))
@@ -645,7 +655,7 @@ function M.World:MeteorShower(number, minDiameter, maxDiameter, minVelocity, max
     end
   end
   self:ResetMeteorAges()
-  debugEcho("shower done", #self.meteors .. " meteors", self.metalSpotCount .. " metal spots", self.geothermalMeteorCount .. " geothermals")
+  debugEcho("shower done", #self.meteors .. " meteors")
 end
 
 function M.World:SetMetalGeothermalRamp(overwrite)
@@ -684,55 +694,74 @@ function M.World:AddStartMeteor(sx, sz, diameterImpactor)
   m.start = true
 end
 
-function M.World:MirrorAll(mirrorX, mirrorZ)
-  self.mirror = "none"
+function M.World:AddMirrorMeteor(meteor, binding, mirrorIndex)
+  local bind
+  if binding then bind = meteor end
+  local mm = meteor:Mirror(binding, mirrorIndex)
+  tInsert(self.meteors, mm)
+  mm.metalGeothermalRampSet = meteor.metalGeothermalRampSet
+  mm.start = meteor.start
+  if meteor.start then
+    if self.showerRamps then mm:Add180Ramps() end
+    mm:Collide()
+  end
+  if binding then meteor.mirrorMeteor = mm end
+  return mm
+end
+
+-- mirrorIndex
+-- 1 == x only, 2 == z only, 3 == x and z, -120 = rotate by 120 degrees
+function M.World:MirrorAll(...) -- mirrorIndex, mirrorIndex, mirrorIndex
   local meteorsCopy = tDuplicate(self.meteors) -- so that we don't infinite mirror
   self.meteors = {}
-  local mirrorIndex = 0
-  if mirrorX then mirrorIndex = mirrorIndex + 1 end
-  if mirrorZ then mirrorIndex = mirrorIndex + 2 end
+  local newMeteors = {}
+  local mirrorIndices = {...}
   local bigCraterRadius = mMin(self.mapSizeX, self.mapSizeZ) / 3
-  for i, m in pairs(meteorsCopy) do
+  for i = #meteorsCopy, 1, -1 do
+    local m = meteorsCopy[i]
     if m.impact.craterRadius >= self.noMirrorRadius then
-      local x, z = m.sx, m.sz
-      if mirrorX then x = self.mapSizeX - x end
-      if mirrorZ then z = self.mapSizeZ - z end
-      local mm = m:Mirror(false, x, z)
-      -- block mirroring meteors that overlap eachother
-      if DistanceSq(m.sx, m.sz, mm.sx, mm.sz) < (m.impact.craterRadius + mm.impact.craterRadius) ^ 2 then
-        if m.impact.craterRadius < bigCraterRadius then
-          -- remove craters less than a third of the smallest map axis
-          mm:Delete(true)
-          m:Delete(true)
-          mm, m = nil, nil
+      local mms = {}
+      for ii, mirrorIndex in pairs(mirrorIndices) do
+        local mm = m:Mirror(false, mirrorIndex)
+        -- block mirroring meteors that overlap eachother
+        if not m.impact then m:Collide() end
+        mm:Collide()
+        if DistanceSq(m.sx, m.sz, mm.sx, mm.sz) < (m.impact.craterRadius + mm.impact.craterRadius) ^ 2 then
+          if m.impact.craterRadius < bigCraterRadius then
+            -- remove craters less than a third of the smallest map axis
+            -- debugEcho("delete both", m.sx, m.sz, mm.sx, mm.sz, m.impact.craterRadius, mm.impact.craterRadius)
+            m = nil
+            tRemove(meteorsCopy, i)
+            break
+          else
+            -- move big craters to the center and delete their mirror
+            x = self.centerX + RandomVariance(20)
+            z = self.centerZ + RandomVariance(20)
+            m:Move(x, z)
+            -- debugEcho("move to center", x, z)
+            mms = {}
+            break
+          end
         else
-          -- move big craters to the center and delete their mirror
-          mm:Delete(true)
-          mm = nil
-          x = self.mapSizeX/2 + RandomVariance(20)
-          z = self.mapSizeZ/2 + RandomVariance(20)
-          m:Move(x, z)
+          tInsert(mms, {mi = mirrorIndex, mm = mm})
         end
       end
-      if m and mm then
-        m.mirrorAlled = m.mirrorAlled or {}
-        m.mirrorAlled[mirrorIndex] = m.mirrorAlled[mirrorIndex] or {}
-        tInsert(m.mirrorAlled[mirrorIndex], mm)
+      if m then
+        tInsert(newMeteors, m)
+        m.mirrorAlled = {}
+        for i, entry in pairs(mms) do
+          local mirrorIndex = entry.mi
+          local mm = entry.mm
+          m.mirrorAlled[mirrorIndex] = m.mirrorAlled[mirrorIndex] or {}
+          tInsert(m.mirrorAlled[mirrorIndex], mm)
+          tInsert(newMeteors, mm)
+        end
       end
     end
   end
-  local meteorsMirrored = tDuplicate(self.meteors)
-  self.meteors = {}
-  local switch = true
-  local m = true
-  while m do
-    if switch then
-      m = tRemove(meteorsCopy, 1) or tRemove(meteorsCopy, 1)
-    else
-      m = tRemove(meteorsMirrored, 1) or tRemove(meteorsCopy, 1)
-    end
-    if m then tInsert(self.meteors, m) end
-    switch = not switch
+  for i = #newMeteors, 1, -1 do
+    local m = newMeteors[i]
+    tInsert(self.meteors, m)
   end
 end
 
@@ -742,11 +771,8 @@ function M.World:SetMetalGeothermalRampPostMirrorAll()
     if m.mirrorAlled then
       m:MetalGeothermalRamp()
       for mirrorIndex, mms in pairs(m.mirrorAlled) do
-        local mirrorX, mirrorZ
-        if mirrorIndex >= 2 then mirrorZ = true end
-        if mirrorIndex == 1 or mirrorIndex == 3 then mirrorX = true end
         for ii, mm in pairs(mms) do
-          m:CopyMetalGeothermalRamp(mm, mirrorX, mirrorZ)
+          m:CopyMetalGeothermalRamp(mm, mirrorIndex)
         end
       end
     end
@@ -824,15 +850,31 @@ function M.World:GetMetalSpots()
   return metalSpots
 end
 
-function M.World:MirrorXZ(x, z)
+function M.World:MirrorXZ(x, z, mirrorIndex)
+  if not mirrorIndex then
+    if self.mirror == "relfectionalx" then
+      mirrorIndex = 1
+    elseif self.mirror == "relfectionalz" then
+      mirrorIndex = 2
+    elseif self.mirror == "rotational" then
+      mirrorIndex = 3
+    end
+  end
+  if not mirrorIndex or mirrorIndex == 0 then return x, z end
   local nx, nz
-  if self.mirror == "reflectionalx" then
+  if mirrorIndex < 0 then
+    local angle, dx, dz = AngleXYXY(self.centerX, self.centerZ, x, z)
+    local dist = mFloor(mSqrt((dx*dx)+(dz*dz)))
+    local nangle = AngleAdd(angle, -mirrorIndex*radiansPerDegree)
+    nx, nz = CirclePos(self.centerX, self.centerZ, dist, nangle)
+    -- debugEcho(x, z, self.centerX, self.centerZ, dist, angle, nangle, nx, nz)
+  elseif mirrorIndex == 1 then
     nx = self.mapSizeX - x
     nz = z+0
-  elseif self.mirror == "reflectionalz" then
+  elseif mirrorIndex == 2 then
     nx = x+0
     nz = self.mapSizeZ - z
-  elseif self.mirror == "rotational" then
+  elseif mirrorIndex == 3 then
     nx = self.mapSizeX - x
     nz = self.mapSizeZ - z
   end
@@ -1797,6 +1839,20 @@ function M.Meteor:BlockedMetalGeothermal()
   if not self.impact then self:Collide() end
   local meteors = self.world.meteors
   local blocked = false
+  if self.mirrorAlled then
+    -- prevent rotationally mirrored maps from putting metal & geos on craters that will be mirrored off the map edge
+    for mirrorIndex, mms in pairs(self.mirrorAlled) do
+      if mirrorIndex < 0 then
+        local distSq = DistanceSq(self.world.centerX, self.world.centerZ, self.sx, self.sz) 
+        if distSq > (self.world.halfSmallestDimension-(self.world.metalSpotSeparation/2)) ^ 2 then
+          -- debugEcho("metalgeo block radial symmetry")
+          return true
+        else
+          break
+        end
+      end
+    end
+  end
   for i = #meteors, 1, -1 do
     local m = meteors[i]
     if m == self then break end
@@ -1808,19 +1864,23 @@ function M.Meteor:BlockedMetalGeothermal()
       -- debugEcho(self.sx, self.sz, self.impact.craterRadius, "blocked by", m.sx, m.sz, m.impact.craterRadius)
       break
     end
-    if self.mirrorMeteor then
-      if not self.mirrorMeteor.impact then self.mirrorMeteor:Collide() end
-      distSq = DistanceSq(self.mirrorMeteor.sx, self.mirrorMeteor.sz, m.sx, m.sz)
-      radiiSq = (m.impact.craterRadius + self.mirrorMeteor.impact.craterRadius) ^ 2
-      if m.impact.craterRadius < self.impact.craterRadius * 0.67 then
-        radiiSq = (m.impact.craterRadius + (self.mirrorMeteor.impact.craterRadius * 0.5)) ^ 2
-      end
-      if distSq < radiiSq then
-        blocked = true
-        -- debugEcho(self.sx, self.sz, self.impact.craterRadius, "blocked by", m.sx, m.sz, m.impact.craterRadius)
-        break
+    if self.mirrorMeteor or self.mirrorAlled then
+      local mirrorList = self.mirrorAlled or {[0] = {self.mirrorMeteor}}
+      for mirrorIndex, mms in pairs(mirrorList) do
+        for i, mm in pairs(mms) do
+          if not mm.impact then mm:Collide() end
+          distSq = DistanceSq(mm.sx, mm.sz, m.sx, m.sz)
+          radiiSq = (m.impact.craterRadius + mm.impact.craterRadius) ^ 2
+          if distSq < radiiSq then
+            blocked = true
+            -- debugEcho(self.sx, self.sz, self.impact.craterRadius, "blocked by", m.sx, m.sz, m.impact.craterRadius)
+            break
+          end
+        end
+        if blocked then break end
       end
     end
+    if blocked then break end
   end
   return blocked
 end
@@ -1860,14 +1920,14 @@ function M.Meteor:MetalGeothermalRamp(noMirror, overwrite)
   end
 end
 
-function M.Meteor:CopyMetalGeothermalRamp(targetMeteor, mirrorX, mirrorZ)
+function M.Meteor:CopyMetalGeothermalRamp(targetMeteor, mirrorIndex)
   if not targetMeteor.geothermal and self.geothermal then
     self.world.geothermalMeteorCount = self.world.geothermalMeteorCount + 1
   end
   targetMeteor.geothermal = self.geothermal
   targetMeteor:SetMetalSpotCount(self.metal, true)
   for r, ramp in pairs(self.ramps) do
-    targetMeteor:AddRamp(AngleMirror(ramp.angle, mirrorX, mirrorZ), ramp.width)
+    targetMeteor:AddRamp(AngleMirror(ramp.angle, mirrorIndex), ramp.width)
   end
   targetMeteor.metalGeothermalRampSet = true
 end
@@ -1892,23 +1952,18 @@ function M.Meteor:ClearRamps()
   self:Collide()
 end
 
-function M.Meteor:Mirror(binding, x, z)
-  if not x then x, z = self.world:MirrorXZ(self.sx, self.sz) end
+function M.Meteor:Mirror(binding, mirrorIndex)
+  local x, z = self.world:MirrorXZ(self.sx, self.sz, mirrorIndex)
   local nsx = VaryWithinBounds(x, 10, 0, self.world.mapSizeX)
   local nsz = VaryWithinBounds(z, 10, 0, self.world.mapSizeZ)
-  if nsx then
-    local bind
-    if binding then bind = self end
-    local mm = self.world:AddMeteor(nsx, nsz, VaryWithinBounds(self.diameterImpactor, 3, 1, 9999), VaryWithinBounds(self.velocityImpactKm, 5, 1, 120), VaryWithinBounds(self.angleImpact, 5, 1, 89), VaryWithinBounds(self.densityImpactor, 100, 1000, 10000), self.age, self.metal, self.geothermal, nil, nil, bind, true)
-    mm.metalGeothermalRampSet = self.metalGeothermalRampSet
-    mm.start = self.start
-    if self.start then
-      if self.world.showerRamps then mm:Add180Ramps() end
-      self:Collide()
-    end
-    if binding then self.mirrorMeteor = mm end
-    return mm
-  end
+  local bind
+  if binding then bind = self end
+  -- world, sx, sz, diameterImpactor, velocityImpactKm, angleImpact, densityImpactor, age, metal, geothermal, seedSeed, ramps, mirrorMeteor)
+  local mm = M.Meteor(self.world, nsx, nsz, VaryWithinBounds(self.diameterImpactor, 3, 1, 9999), VaryWithinBounds(self.velocityImpactKm, 5, 1, 120), VaryWithinBounds(self.angleImpact, 5, 1, 89), VaryWithinBounds(self.densityImpactor, 100, 1000, 10000), self.age, self.metal, self.geothermal, nil, nil, bind)
+  self:CopyMetalGeothermalRamp(mm, mirrorIndex)
+  mm.start = self.start
+  if binding then self.mirrorMeteor = mm end
+  return mm
 end
 
 ----------------------------------------------------------
