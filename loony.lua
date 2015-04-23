@@ -216,6 +216,9 @@ local CommandWords = {
     myWorld.mirror = MirrorTypes[mt]
     debugEcho("mirror: " .. myWorld.mirror)
   end,
+  mirrorall = function(words, myWorld, uiCommand)
+    myWorld:MirrorAll(words[3] == "1", words[4] == "1")
+  end,
   save = function(words, myWorld, uiCommand)
     myWorld:Save(words[3])
   end,
@@ -493,7 +496,7 @@ M.World = class(function(a, mapSize512X, mapSize512Z, metersPerElmo, gravity, de
   a.blastRayCraterNumber = 3
   a.generateBlastNoise = true -- generate the noise used for attribute map blast rays
   a.erosion = true -- add bowl power noise to complex craters
-  a.underlyingPerlin = true
+  a.underlyingPerlin = false
   a.underlyingPerlinHeight = 50
   a.noMirrorRadius = 50 -- elmos, craters smaller than this are not mirrored by meteor showers
   -- local echostr = ""
@@ -699,8 +702,9 @@ function M.World:MirrorAll(mirrorX, mirrorZ)
       if DistanceSq(m.sx, m.sz, mm.sx, mm.sz) < (m.impact.craterRadius + mm.impact.craterRadius) ^ 2 then
         if m.impact.craterRadius < bigCraterRadius then
           -- remove craters less than a third of the smallest map axis
-          mm:Delete()
-          mm = nil
+          mm:Delete(true)
+          m:Delete(true)
+          mm, m = nil, nil
         else
           -- move big craters to the center and delete their mirror
           mm:Delete(true)
@@ -710,7 +714,7 @@ function M.World:MirrorAll(mirrorX, mirrorZ)
           m:Move(x, z)
         end
       end
-      if mm then
+      if m and mm then
         m.mirrorAlled = m.mirrorAlled or {}
         m.mirrorAlled[mirrorIndex] = m.mirrorAlled[mirrorIndex] or {}
         tInsert(m.mirrorAlled[mirrorIndex], mm)
@@ -948,6 +952,7 @@ end
 function M.HeightBuffer:Add(x, y, height, alpha)
   if not self:CoordsOkay(x, y) then return end
   alpha = alpha or 1
+  alpha = mMin(1, mMax(0, alpha))
   local newHeight = self.heights[x][y] + (height * alpha)
   self.heights[x][y] = newHeight
   self:MinMaxCheck(newHeight)
@@ -956,6 +961,7 @@ end
 function M.HeightBuffer:Blend(x, y, height, alpha, secondary)
   if not self:CoordsOkay(x, y) then return end
   alpha = alpha or 1
+  alpha = mMin(1, mMax(0, alpha))
   if alpha < 1 and self.heights[x][y] > height then alpha = alpha * alpha end
   local orig = 1 - alpha
   local newHeight = (self.heights[x][y] * orig) + (height * alpha)
@@ -1284,7 +1290,7 @@ M.Crater = class(function(a, impact, renderer)
   a.x, a.y = renderer.mapRuler:XZtoXY(meteor.sx, meteor.sz)
   a.radius = impact.craterRadius / elmosPerPixel
 
-  a.falloff = impact.craterRadius * 1.5 / elmosPerPixel
+  a.falloff = impact.craterFalloff / elmosPerPixel
   a.peakC = (a.radius / 8) ^ 2
   a.totalradius = a.radius + a.falloff
   a.totalradiusSq = a.totalradius * a.totalradius
@@ -1478,6 +1484,7 @@ function M.Crater:HeightPixel(x, y)
     height = rimHeight
     local fallDistSq = distSq - self.radiusSq
     if fallDistSq <= self.falloffSq then
+      -- alpha = (fallDistSq+1) ^ (-3)
       local gaussDecay = Gaussian(fallDistSq, self.falloffSqFourth)
       local linearGrowth = mMin(fallDistSq / self.falloffSq, 1)
       local linearDecay = 1 - linearGrowth
@@ -1933,6 +1940,7 @@ function M.Impact:Model()
   self.diameterTransient = 1.161 * ((meteor.densityImpactor / world.density) ^ 0.33) * (meteor.diameterImpactor ^ 0.78) * (self.velocityImpact ^ 0.44) * (world.gravity ^ -0.22) * (mSin(self.angleImpactRadians) ^ 0.33)
   self.diameterSimple = self.diameterTransient * 1.25
   self.depthTransient = self.diameterTransient / twoSqrtTwo
+  self.depthTransientSq = self.depthTransient ^ 2
   self.rimHeightTransient = self.diameterTransient / 14.1
   self.rimHeightSimple = 0.07 * ((self.diameterTransient ^ 4) / (self.diameterSimple ^ 3))
   self.brecciaVolume = 0.032 * (self.diameterSimple ^ 3)
@@ -1975,12 +1983,16 @@ function M.Impact:Model()
     self.craterDepth = ((self.depthSimple + self.rimHeightSimple)  ) / world.metersPerElmo
     -- self.craterDepth = self.craterDepth * mMin(1-self.ageRatio, 0.5)
     self.craterRadius = (self.diameterSimple / 2) / world.metersPerElmo
-    self.craterFalloff = self.craterRadius * 0.66
     self.rayHeight = (self.craterRimHeight / 2)
     if meteor.age < world.rayAge then
       self.rayAgeRatio = 1 - (meteor.age / world.rayAge)
     end
   end
+
+  self.craterFalloff = self.craterRadius * 1.5
+  -- self.craterFalloff = ((self.diameterTransient ^ 2) / 200) / world.metersPerElmo
+  -- local minEjectaHeight = self.craterRimHeighbt / 0.001
+  -- self.craterFalloff = ((self.diameterTransient^4) / (112*minEjectaHeight)) ^ (1/3)
 
   if meteor.start then
     self.bowlPower = 2
