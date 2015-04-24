@@ -501,6 +501,7 @@ M.World = class(function(a, mapSize512X, mapSize512Z, metersPerElmo, gravity, de
   a.rayCraterNumber = 4
   a.blastRayCraterNumber = 3
   a.generateBlastNoise = true -- generate the noise used for attribute map blast rays
+  a.generateAgeNoise = true
   a.erosion = true -- add bowl power noise to complex craters
   a.underlyingPerlin = false
   a.underlyingPerlinHeight = 50
@@ -589,7 +590,6 @@ function M.World:RendererFrame(frame)
     if renderer.complete then
       tRemove(self.renderers, 1)
     end
-    -- return renderer
   end
 end
 
@@ -716,11 +716,14 @@ function M.World:MirrorAll(...) -- mirrorIndex, mirrorIndex, mirrorIndex
   self.meteors = {}
   local newMeteors = {}
   local mirrorIndices = {...}
+  if type(mirrorIndices[1]) == "table" then
+    mirrorIndices = mirrorIndices[1]
+  end
   local bigCraterRadius = mMin(self.mapSizeX, self.mapSizeZ) / 3
   for i = #meteorsCopy, 1, -1 do
     local m = meteorsCopy[i]
+    local mms = {}
     if m.impact.craterRadius >= self.noMirrorRadius then
-      local mms = {}
       for ii, mirrorIndex in pairs(mirrorIndices) do
         local mm = m:Mirror(false, mirrorIndex)
         -- block mirroring meteors that overlap eachother
@@ -746,16 +749,16 @@ function M.World:MirrorAll(...) -- mirrorIndex, mirrorIndex, mirrorIndex
           tInsert(mms, {mi = mirrorIndex, mm = mm})
         end
       end
-      if m then
-        tInsert(newMeteors, m)
-        m.mirrorAlled = {}
-        for i, entry in pairs(mms) do
-          local mirrorIndex = entry.mi
-          local mm = entry.mm
-          m.mirrorAlled[mirrorIndex] = m.mirrorAlled[mirrorIndex] or {}
-          tInsert(m.mirrorAlled[mirrorIndex], mm)
-          tInsert(newMeteors, mm)
-        end
+    end
+    if m then
+      tInsert(newMeteors, m)
+      m.mirrorAlled = {}
+      for i, entry in pairs(mms) do
+        local mirrorIndex = entry.mi
+        local mm = entry.mm
+        m.mirrorAlled[mirrorIndex] = m.mirrorAlled[mirrorIndex] or {}
+        tInsert(m.mirrorAlled[mirrorIndex], mm)
+        tInsert(newMeteors, mm)
       end
     end
   end
@@ -800,6 +803,7 @@ function M.World:RenderHeightImage(mapRuler, uiCommand)
 end
 
 function M.World:RenderHeight(mapRuler, uiCommand)
+  doNotStore = true
   mapRuler = mapRuler or self.heightMapRuler
   local tempHeightBuf = M.HeightBuffer(self, mapRuler)
   tInsert(self.renderers, M.Renderer(self, mapRuler, 4000, "Height", "data", uiCommand, tempHeightBuf))
@@ -1405,6 +1409,7 @@ M.Crater = class(function(a, impact, renderer)
 end)
 
 function M.Crater:AddAgeNoise()
+  if not self.impact.world.generateAgeNoise then return end
   if self.ageNoise then return end
   if self.impact.meteor.age > 0 and self.totalradiusPlusWobble < 1000 then -- otherwise, way too much memory
     self.ageNoise = M.NoisePatch(self.x, self.y, self.totalradiusPlusWobble, self:PopSeed(), 1, 0.33, 10-self.renderer.mapRuler.elmosPerPixelPowersOfTwo)
