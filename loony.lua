@@ -485,6 +485,7 @@ M.World = class(function(a, mapSize512X, mapSize512Z, metersPerElmo, gravity, de
   a.geothermalTarget = geothermalTarget or 4
   a.showerRamps = showerRamps
   a.rampMinRadius = 300 -- elmos
+  a.rampDefaultNumber = 2
   a.metalSpotMaxPerCrater = 3
   a.metalSpotAmount = 2.0
   a.metalSpotRadius = 50 -- elmos
@@ -689,7 +690,7 @@ end
 
 function M.World:AddStartMeteor(sx, sz, diameterImpactor)
   local m = self:AddMeteor(sx, sz, diameterImpactor, nil, nil, nil, nil, 3, false)
-  if self.showerRamps then m:Add180Ramps() end
+  if self.showerRamps then m:AddSomeRamps() end
   m.metalGeothermalRampSet = true
   m.start = true
 end
@@ -702,7 +703,7 @@ function M.World:AddMirrorMeteor(meteor, binding, mirrorIndex)
   mm.metalGeothermalRampSet = meteor.metalGeothermalRampSet
   mm.start = meteor.start
   if meteor.start then
-    if self.showerRamps then mm:Add180Ramps() end
+    if self.showerRamps then mm:AddSomeRamps() end
     mm:Collide()
   end
   if binding then meteor.mirrorMeteor = mm end
@@ -1353,8 +1354,9 @@ M.Crater = class(function(a, impact, renderer)
     local width = ramp.width / elmosPerPixel
     local halfTheta = mAsin(width / (2 * a.totalradiusPlusWobble))
     local cRamp = { angle = ramp.angle, width = width, halfTheta = halfTheta,
-      widthNoise = M.LinearNoise(10, 0.1, a:PopSeed(), 0.5, 2),
-      angleNoise = M.LinearNoise(25, 0.05, a:PopSeed(), 0.5, 4) }
+      -- length, intensity, seed, persistence, N, amplitude
+      widthNoise = M.LinearNoise(10, 0.2, a:PopSeed(), 0.25),
+      angleNoise = M.LinearNoise(25, 0.05, a:PopSeed(), 0.25) }
     tInsert(a.ramps, cRamp)
   end
 
@@ -1915,7 +1917,7 @@ function M.Meteor:MetalGeothermalRamp(noMirror, overwrite)
     end
   end
   if world.showerRamps and impact.craterRadius > world.rampMinRadius then
-    self:Add180Ramps()
+    self:AddSomeRamps()
   end
   self.metalGeothermalRampSet = true
   if not noMirror and self.mirrorMeteor and type(self.mirrorMeteor) ~= boolean then
@@ -1935,9 +1937,13 @@ function M.Meteor:CopyMetalGeothermalRamp(targetMeteor, mirrorIndex)
   targetMeteor.metalGeothermalRampSet = true
 end
 
-function M.Meteor:Add180Ramps()
+function M.Meteor:AddSomeRamps(number)
+  number = number or self.world.rampDefaultNumber
+  local inc = twicePi / number
   local angle, width = self:AddRamp()
-  local angle2, width2 = self:AddRamp(AngleAdd(angle, pi))
+  for i = 1, number-1 do
+    self:AddRamp(AngleAdd(angle, inc*i))
+  end
 end
 
 function M.Meteor:AddRamp(angle, width)
