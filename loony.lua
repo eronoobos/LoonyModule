@@ -1108,7 +1108,7 @@ function M.Renderer:Finish(frame)
   self:FinishFunc()
   if not self.dontEndUiCommand then M.EndUiCommand(self.uiCommand) end
   local timeDiff = frame - self.startFrame
-  debugEcho(self.renderType .. " (" .. self.mapRuler.width .. "x" .. self.mapRuler.height .. ") rendered in " .. timeDiff .. " seconds")
+  debugEcho(self.renderType .. " (" .. self.mapRuler.width .. "x" .. self.mapRuler.height .. ") rendered in " .. timeDiff .. " render frames")
   self.complete = true
   M.CompleteRenderer(self)
 end
