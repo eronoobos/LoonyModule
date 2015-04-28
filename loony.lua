@@ -720,7 +720,6 @@ function M.World:MirrorAll(...) -- mirrorIndex, mirrorIndex, mirrorIndex
   if type(mirrorIndices[1]) == "table" then
     mirrorIndices = mirrorIndices[1]
   end
-  local bigCraterRadius = mMin(self.mapSizeX, self.mapSizeZ) / 3
   for i = #meteorsCopy, 1, -1 do
     local m = meteorsCopy[i]
     local mms = {}
@@ -731,21 +730,10 @@ function M.World:MirrorAll(...) -- mirrorIndex, mirrorIndex, mirrorIndex
         if not m.impact then m:Collide() end
         mm:Collide()
         if DistanceSq(m.sx, m.sz, mm.sx, mm.sz) < (m.impact.craterRadius + mm.impact.craterRadius) ^ 2 then
-          if m.impact.craterRadius < bigCraterRadius then
-            -- remove craters less than a third of the smallest map axis
-            -- debugEcho("delete both", m.sx, m.sz, mm.sx, mm.sz, m.impact.craterRadius, mm.impact.craterRadius)
-            m = nil
-            tRemove(meteorsCopy, i)
-            break
-          else
-            -- move big craters to the center and delete their mirror
-            x = self.centerX + RandomVariance(20)
-            z = self.centerZ + RandomVariance(20)
-            m:Move(x, z)
-            -- debugEcho("move to center", x, z)
-            mms = {}
-            break
-          end
+          -- remove craters less than a third of the smallest map axis
+          m = nil
+          tRemove(meteorsCopy, i)
+          break
         else
           tInsert(mms, {mi = mirrorIndex, mm = mm})
         end
@@ -1784,8 +1772,7 @@ function M.Meteor:Move(sx, sz, noMirror)
   self:Collide()
 end
 
-function M.Meteor:Resize(multiplier, noMirror)
-  local targetRadius = self.impact.craterRadius * multiplier
+function M.Meteor:Resize(targetRadius, noMirror)
   local targetRadiusM = targetRadius * self.world.metersPerElmo
   local targetDiameterM = targetRadiusM * 2
   local newDiameterImpactor
