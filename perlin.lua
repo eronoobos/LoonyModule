@@ -5,6 +5,12 @@ if love then mRandomSeed = love.math.setRandomSeed end
 
 local rand = { mySeed = 1, lastN = -1 }
 
+local function FeedWatchDog()
+  if Spring and Spring.ClearWatchDogTimer then
+    Spring.ClearWatchDogTimer()
+  end
+end
+
 function rand:get(seed, n)
   if n <= 0 then n = -2 * n
   else n = 2 * n - 1
@@ -146,6 +152,7 @@ local function TwoD(seed, width, height, persistence, N, amplitude)
     local compAmplitude = amplitude * (persistence^(i-1))
     local comp = perlinComponent2D(seed+i*1000, width, height, compInterp, compAmplitude)
     for r = 1, height do
+      FeedWatchDog()
       for c = 1, width do
         data[r][c] = data[r][c] + comp[r][c]
         if data[r][c] < min then min = data[r][c] end

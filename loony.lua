@@ -241,6 +241,12 @@ local CommandWords = {
 
 -- local functions:
 
+local function FeedWatchDog()
+  if Spring and Spring.ClearWatchDogTimer then
+    Spring.ClearWatchDogTimer()
+  end
+end
+
 local function tRemoveRandom(fromTable)
   return tRemove(fromTable, mRandom(1, #fromTable))
 end
@@ -586,6 +592,7 @@ end
 function M.World:RendererFrame(frame)
   local renderer = self.renderers[1]
   if renderer then
+    FeedWatchDog()
     renderer:Frame(frame)
     M.FrameRenderer(renderer)
     if renderer.complete then
