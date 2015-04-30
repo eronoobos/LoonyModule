@@ -1128,7 +1128,10 @@ function M.Renderer:HeightInit()
   self.totalProgress = self.totalCraterArea
   if self.world.underlyingPerlin then
     --seed, sideLength, intensity, persistence, N, amplitude, blackValue, whiteValue)
-    local perlin = M.TwoDimensionalNoise(NewSeed(), mMax(self.mapRuler.width, self.mapRuler.height), self.world.underlyingPerlinHeight, 0.28, 10-self.mapRuler.elmosPerPixelPowersOfTwo)
+    local baseN = 10 + mFloor(self.world.underlyingPerlinHeight / 200)
+    local persistence = baseN * 0.028
+    debugEcho("baseN " .. baseN, "persistence " .. persistence)
+    local perlin = M.TwoDimensionalNoise(NewSeed(), mMax(self.mapRuler.width, self.mapRuler.height), self.world.underlyingPerlinHeight, persistence, baseN-self.mapRuler.elmosPerPixelPowersOfTwo)
     self.heightBuf.heights = perlin.xy
   end
 end
